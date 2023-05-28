@@ -1,4 +1,6 @@
 use std::{net::{Ipv4Addr, UdpSocket, SocketAddr, IpAddr}, time::Duration, sync::mpsc::{Sender, Receiver}};
+use serde_json::Value;
+
 use super::*;
 
 
@@ -80,6 +82,12 @@ impl GreeClient {
         let pack: StatusResponsePack = serde_json::from_str(&pack)?;
         debug!("[{}] pack: {:?}", addr, pack);
         Ok(pack)
+    }
+
+    pub fn setvars(&self, addr: IpAddr, mac: &str, key: &str, names: &[&'static str], values: &[Value]) -> Result<CommandResponsePack> {
+        let gm = setvar_request(mac, key.as_bytes(), names, values)?;
+        let ogm = self.exchange(addr, &gm)?;
+        Ok(handle_response(addr, &ogm.pack, key)?)
     }
 
 }

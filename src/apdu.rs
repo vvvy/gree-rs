@@ -1,3 +1,7 @@
+use std::fmt::Debug;
+use std::net::IpAddr;
+
+use serde::de;
 use serde_derive::{Serialize, Deserialize};
 //use serde_json::{json, Value};
 
@@ -312,7 +316,7 @@ pub fn bind_request<'t>(mac: &'t str, key: &[u8]) -> Result<GenericOutMessage<'t
 } */
 #[derive(Serialize)]
 pub struct StatusRequestPack<'t> {
-    cols: Vec<&'t str>, 
+    cols: &'t[&'t str], 
     mac: &'t str,
     t: &'t str,
 }
@@ -353,8 +357,10 @@ pub struct StatusResponsePack {
     pub dat: Vec<Value>,
 }
 
-pub fn status_request<'t>(mac: &'t str, key: &[u8], variables: Option<Vec<&'static str>>) -> Result<GenericOutMessage<'t>> {
-    let variables = variables.unwrap_or_else(|| vec![vars::POW, vars::MOD, vars::SET_TEM, vars::TEM_UN, vars::WD_SPD]);
+const DEFAULT_VARS: [&'static str; 5] = [vars::POW, vars::MOD, vars::SET_TEM, vars::TEM_UN, vars::WD_SPD];
+
+pub fn status_request<'t>(mac: &'t str, key: &[u8], variables: Option<&[&str]>) -> Result<GenericOutMessage<'t>> {
+    let variables = variables.unwrap_or_else(|| &DEFAULT_VARS);
     let pack = serde_json::to_vec(&StatusRequestPack {
         cols: variables,
         mac,
@@ -383,6 +389,82 @@ pub fn status_request<'t>(mac: &'t str, key: &[u8], variables: Option<Vec<&'stat
 
 }
 
+//------------------------------------------------------------------------------------------------------------------------------
+
+/* {
+"opt": ["TemUn", "SetTem"],
+"p": [0, 27],
+"t": "cmd"
+} */
+
+#[derive(Serialize)]
+pub struct CommandPack<'t> {
+    opt: &'t[&'t str], 
+    p: &'t[Value],
+    t: &'t str,
+}
+
+/* {
+  "t": "res",
+  "mac": "<MAC address>",
+  "r": 200,
+  "opt": ["TemUn", "SetTem"],
+  "p": [0, 27],
+  "val": [0, 27]
+} */
+#[derive(Debug, Deserialize)]
+pub struct CommandResponsePack {
+    pub t: String,
+    pub mac: String,
+    pub r: Int,
+    pub opt: Vec<String>,
+    pub p: Vec<Value>,
+    pub val: Vec<Value>,
+}
+
+
+pub fn setvar_request<'t>(mac: &'t str, key: &[u8], names: &[&str], values: &[Value]) -> Result<GenericOutMessage<'t>> {
+    /* {
+    "opt": ["TemUn", "SetTem"],
+    "p": [0, 27],
+    "t": "cmd"
+    } */
+    let pack = serde_json::to_vec(&CommandPack {
+        opt: names,
+        p: values,
+        t: "cmd",
+    })?;
+
+    let pack = encode_request(pack, key);
+
+
+    /* {
+    "cid": "app",
+    "i": 0,
+    "pack": "<encrypted, encoded pack>",
+    "t": "pack",
+    "tcid": "<MAC address>",
+    "uid": 0
+    } */
+
+    Ok(GenericOutMessage {
+        cid: "app",
+        i: 0,
+        pack,
+        t: "pack",
+        tcid: mac,
+        uid: 0
+    })
+}
+
+
+pub fn handle_response<T: de::DeserializeOwned + Debug>(addr: IpAddr, pack:&str, key: &str) -> Result<T> {
+    let pack = decode_response(pack, key.as_bytes())?;
+    trace!("[{}] pack raw: {}", addr, pack);
+    let pack: T = serde_json::from_str(&pack)?;
+    debug!("[{}] pack: {:?}", addr, pack);
+    Ok(pack)
+}
 
 //------------------------------------------------------------------------------------------------------------------------------
 
