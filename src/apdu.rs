@@ -135,6 +135,29 @@ pub enum WdSpd {
         0: off
         1: on
     */
+
+    pub const ALL: [&'static str; 5] = [
+        POW, 
+        MOD, 
+        SET_TEM, 
+        TEM_UN, 
+        WD_SPD
+    ];
+
+    pub const DEFAULT: [&'static str; 5] = [POW, MOD, SET_TEM, TEM_UN, WD_SPD];
+
+    /// Internalizes name of variable
+    pub fn name_of(n: &str) -> Option<&'static str> {
+        match n {
+            POW => Some(POW),
+            MOD => Some(MOD),
+            SET_TEM => Some(SET_TEM),
+            TEM_UN => Some(TEM_UN),
+            WD_SPD => Some(WD_SPD),
+            _ => None,
+        }
+    }
+
 }
 
 pub const SCAN_MESSAGE: &[u8] = br#"{
@@ -250,7 +273,7 @@ pub struct BindResponsePack {
     pub r: Int
 }
 
-pub fn bind_request<'t>(mac: &'t str, key: &[u8]) -> Result<GenericOutMessage<'t>> {
+pub fn bind_request<'t>(mac: &'t str, key: &str) -> Result<GenericOutMessage<'t>> {
 
     /* {
     "mac": "<MAC address>",
@@ -263,7 +286,7 @@ pub fn bind_request<'t>(mac: &'t str, key: &[u8]) -> Result<GenericOutMessage<'t
         uid: 0
     })?;
 
-    let pack = encode_request(pack, key);
+    let pack = encode_request(pack, key.as_bytes());
 
     /*
     {
@@ -357,17 +380,14 @@ pub struct StatusResponsePack {
     pub dat: Vec<Value>,
 }
 
-const DEFAULT_VARS: [&'static str; 5] = [vars::POW, vars::MOD, vars::SET_TEM, vars::TEM_UN, vars::WD_SPD];
-
-pub fn status_request<'t>(mac: &'t str, key: &[u8], variables: Option<&[&str]>) -> Result<GenericOutMessage<'t>> {
-    let variables = variables.unwrap_or_else(|| &DEFAULT_VARS);
+pub fn status_request<'t>(mac: &'t str, key: &str, variables: &[&str]) -> Result<GenericOutMessage<'t>> {
     let pack = serde_json::to_vec(&StatusRequestPack {
         cols: variables,
         mac,
         t: "status",
     })?;
 
-    let pack = encode_request(pack, key);
+    let pack = encode_request(pack, key.as_bytes());
 
     /* {
     "cid": "app",
@@ -419,11 +439,13 @@ pub struct CommandResponsePack {
     pub r: Int,
     pub opt: Vec<String>,
     pub p: Vec<Value>,
+    
+    #[serde(default)]
     pub val: Vec<Value>,
 }
 
 
-pub fn setvar_request<'t>(mac: &'t str, key: &[u8], names: &[&str], values: &[Value]) -> Result<GenericOutMessage<'t>> {
+pub fn setvar_request<'t>(mac: &'t str, key: &str, names: &[&str], values: &[Value]) -> Result<GenericOutMessage<'t>> {
     /* {
     "opt": ["TemUn", "SetTem"],
     "p": [0, 27],
@@ -435,7 +457,7 @@ pub fn setvar_request<'t>(mac: &'t str, key: &[u8], names: &[&str], values: &[Va
         t: "cmd",
     })?;
 
-    let pack = encode_request(pack, key);
+    let pack = encode_request(pack, key.as_bytes());
 
 
     /* {
@@ -459,7 +481,7 @@ pub fn setvar_request<'t>(mac: &'t str, key: &[u8], names: &[&str], values: &[Va
 
 
 pub fn handle_response<T: de::DeserializeOwned + Debug>(addr: IpAddr, pack:&str, key: &str) -> Result<T> {
-    let pack = decode_response(pack, key.as_bytes())?;
+    let pack = decode_response(pack, key)?;
     trace!("[{}] pack raw: {}", addr, pack);
     let pack: T = serde_json::from_str(&pack)?;
     debug!("[{}] pack: {:?}", addr, pack);
@@ -483,8 +505,8 @@ fn pkcs7_pad(payload: &mut Vec<u8>, blocksize: u8) {
     }
 }
 
-pub fn decode_response(pack: &str, key: &[u8]) -> Result<String> {
-    let key = GenericArray::clone_from_slice(key);
+pub fn decode_response(pack: &str, key: &str) -> Result<String> {
+    let key = GenericArray::clone_from_slice(key.as_bytes());
     let cipher = Aes128::new(&key);
     let blocksize = 16;
 

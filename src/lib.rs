@@ -1,6 +1,12 @@
 mod apdu;
+mod tree;
 pub mod sync_client;
-pub use apdu::vars;
+pub mod async_client;
+
+
+pub use apdu::{vars, vars::DEFAULT as DEFAULT_VARS};
+pub use tree::Tree;
+pub use serde_json::Value;
 
 use apdu::*;
 use log::{trace, debug, error};
@@ -8,7 +14,7 @@ use log::{trace, debug, error};
 pub type Error = Box<dyn std::error::Error>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-const GENERIC_KEY: &[u8] = b"a3K8Bx%2r8Y7#xDh";
+const GENERIC_KEY: &str = "a3K8Bx%2r8Y7#xDh";
 const PORT: u16 = 7000;
 
 

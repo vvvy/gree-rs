@@ -1,6 +1,6 @@
 use gree::{*, sync_client::*};
 use log::info;
-use std::net::{IpAddr, Ipv4Addr};
+use std::{net::{IpAddr, Ipv4Addr}, str::FromStr};
 
 const BCAST_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 255));
 
@@ -8,7 +8,8 @@ enum Op {
     Help,
     Scan,
     Bind,
-    Status
+    Status,
+    SetVars
 }
 
 struct Args {
@@ -18,6 +19,18 @@ struct Args {
     mac: Option<String>,
     ip: Option<IpAddr>,
     key: Option<String>,
+    vars: Vec<(String, Value)>
+}
+
+fn parse_var(v: &str) -> Vec<(String, Value)> {
+    v.split(',').map(|kv| -> Option<(String, Value)> {
+        let mut sp = kv.split('=');
+        let name = sp.next()?;
+        let value = sp.next()?;
+        let value = Value::from_str(value).ok()?;
+        Some((name.to_owned(), value))
+    }).map(|kvo| kvo.expect("invalid KV"))
+    .collect()
 }
 
 impl Default for Args {
@@ -29,6 +42,7 @@ impl Default for Args {
             mac: None, 
             ip: None, 
             key: None,
+            vars: vec![],
         }
     }
 }
@@ -43,6 +57,7 @@ Usage
 sync_tool --scan|-s [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-devices({count})> ]
 sync_tool --bind|-b --ip|-i <device-ip-address> --mac|-m <device-mac-adress>
 sync_tool --status|-t --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key>
+sync_tool --set|-e --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key> --var|-v NAME=VALUE[,...]
 "#,
 bcast=a.bcast,
 count=a.count
@@ -60,6 +75,7 @@ fn getcmdln() -> Args {
                 "--count" | "-c" => args.count = a.parse().expect("invalid --count"),
                 "--ip" | "-i" => args.ip = Some( a.parse().expect("invalid --ip")),
                 "--key" | "-k" => args.key = Some(a),
+                "--var" | "-v" => args.vars.append(&mut parse_var(&a)),
                 other => panic!("`{other}` invalid")
             }
             None
@@ -69,6 +85,7 @@ fn getcmdln() -> Args {
                 "--bind" | "-b" => args.op = Some(Op::Bind),
                 "--scan" | "-s" => args.op = Some(Op::Scan),
                 "--status" | "-t" => args.op = Some(Op::Status),
+                "--set" | "-e" => args.op = Some(Op::SetVars),
                 _ => return Some(a)
             }
             None
@@ -110,7 +127,20 @@ fn main() -> Result<()> {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let key = args.key.expect("Must specify --key");
-            let r = c.status(ip, &mac, &key)?;
+            let r = c.status(ip, &mac, &key, &DEFAULT_VARS)?;
+            println!("{r:?}");            
+        }
+        Some(Op::SetVars) => {
+            let ip = args.ip.expect("Must specify --ip");
+            let mac = args.mac.expect("Must specify --mac");
+            let key = args.key.expect("Must specify --key");
+
+            if args.vars.is_empty() {
+                panic!("must specify at least one variable")
+            }
+            let names: Vec<&'static str> = args.vars.iter().map(|(n, _)| vars::name_of(n).expect("invalid var name")).collect();
+            let values: Vec<Value> = args.vars.into_iter().map(|(_, v)|v).collect();
+            let r = c.setvars(ip, &mac, &key, &names, &values)?;
             println!("{r:?}");            
         }
         Some(Op::Help) | None => {
