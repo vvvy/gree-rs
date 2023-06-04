@@ -4,10 +4,10 @@
 //! * `Gree` is a high-level Gree protocol client
 
 
-use std::{net::{Ipv4Addr, UdpSocket, SocketAddr, IpAddr}, time::{Duration, SystemTime, Instant}, sync::mpsc::{Sender, Receiver}};
+use std::{net::{Ipv4Addr, UdpSocket, SocketAddr, IpAddr}, time::{Duration, Instant}, sync::mpsc::{Sender, Receiver}};
 use serde_json::Value;
 
-use crate::tree::{MacAddr, Device};
+use crate::{state::*, vars::VarName};
 
 use super::*;
 
@@ -92,148 +92,149 @@ impl GreeClient {
 
 
 struct GreeInternal {
-    t: Tree,
     c: GreeClient,
-    discovery_instant: Option<Instant>,
-    max_count: usize,
-    bcast_addr: IpAddr,
-    min_discovery_age: Duration,
-    max_discovery_age: Duration,
+    s: GreeState,
+    cfg: GreeConfig,
+    scan_ts: Option<Instant>,
 }
 
 impl GreeInternal {
-    pub const DEFAULT_MAX_COUNT: usize = 10;
-    pub const DEFAULT_BROADCAST_ADDR: [u8; 4] =  [10, 0, 0, 255];
-    pub const DEFAULT_MIN_DISCOVERY_AGE: Duration = Duration::from_secs(60);
-    pub const DEFAULT_MAX_DISCOVERY_AGE: Duration = Duration::from_secs(3600 * 24);
-
-    pub fn new() -> Result<Self> { 
+    pub fn new(cfg: GreeConfig) -> Result<Self> { 
         Ok(Self { 
-            t: Tree::new(SystemTime::now()), 
             c: GreeClient::new()?,
-            discovery_instant: None,
-            max_count: Self::DEFAULT_MAX_COUNT , 
-            bcast_addr: Self::DEFAULT_BROADCAST_ADDR.into(),
-            min_discovery_age: Self::DEFAULT_MIN_DISCOVERY_AGE,
-            max_discovery_age: Self::DEFAULT_MAX_DISCOVERY_AGE,
+            s: GreeState::new(),
+            cfg,
+            scan_ts: None,
         })
     }
+
+    fn scan(&mut self, forced: bool) -> Result<()> {
+        let now = Instant::now();
+
+        let allow = match self.scan_ts {
+            None => true,
+            Some(w) if now >= w + self.cfg.max_scan_age => true,
+            Some(w) if now >= w + self.cfg.min_scan_age && forced => true,
+            _ => false
+        };
+        if allow {
+            let result = self.c.scan(self.cfg.bcast_addr, self.cfg.max_count)?;
+            self.scan_ts = Some(Instant::now());
+            self.s.scan_ind(result);
+        } 
+        Ok(())
+    }
+
 
     fn bindc(mac: &MacAddr, dev: &mut Device, c: &GreeClient) -> Result<()> {
         if dev.key.is_none() {
             let pack = c.bind(dev.ip, mac)?;
-            dev.bind_ind(SystemTime::now(), pack);
+            dev.bind_ind(pack);
         }
         Ok(())
     }
 
-    fn apply(&mut self, scope: Option<&MacAddr>, mut f: impl FnMut(&MacAddr, &mut Device, &GreeClient) -> Result<()>) -> Result<()> {
-        let mut fbound = |mac: &MacAddr, dev: &mut Device, c: &GreeClient| -> Result<()> {
-            Self::bindc(mac, dev, c)?;
-            f(mac, dev,c)
-        };
-        match scope {
-            None => {
-                for (mac, dev) in self.t.devices.iter_mut() { 
-                    if let Err(e) = fbound(mac, dev, &self.c) {
-                        error!("device@{mac}: {e}")
-                    }
-                }
-                Ok(())
-            }
-            Some(mac) => {
-                let dev = self.t.devices
-                    .get_mut(mac)
-                    .ok_or_else(||->Error { format!("mac {mac} not found").into()})?;
-                fbound(mac, dev, &self.c)
-            }       
-        }
-    }
 
-    fn discover(&mut self, force: bool) -> Result<bool> {
-        let now = Instant::now();
-        let allow = match self.discovery_instant {
-            None => true,
-            Some(w) if now >= w + self.max_discovery_age => true,
-            Some(w) if now >= w + self.min_discovery_age && force => true,
-            _ => false
-        };
-        if allow {
-            let sr = self.c.scan(self.bcast_addr, self.max_count)?;
-            self.t.scan_ind(SystemTime::now(), sr);
-            self.discovery_instant = Some(Instant::now());
-        }
-        Ok(allow)
-    }
 
-    fn op(&mut self, scope: Option<&MacAddr>, mut f: impl FnMut(&MacAddr, &mut Device, &GreeClient) -> Result<()>) -> Result<()> {
-        let _ = self.discover(false)?;
-        match self.apply(scope, &mut f) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                if let Ok(true) = self.discover(true) {
-                    self.apply(scope, f)
-                } else {
-                    Err(e)
-                }
+    fn net_read<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
+        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
+        let names: Vec<VarName> = vars
+            .iter()
+            .filter_map(|(name, nv)| if nv.is_net_read_pending() { Some(*name) } else { None })
+            .collect();
+        if names.is_empty() { return Ok(()) }
+        let pack = c.status(dev.ip, mac, key, &names)?;
+        for (n, v) in pack.cols.into_iter().zip(pack.dat.into_iter()) { 
+            if let Some(nv) = vars::name_of(&n).and_then(|n| vars.get_mut(n)) {
+                nv.net_set(v);
             }
         }
+        Ok(())
     }
 
+    fn net_write<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
+        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
+
+        let mut names = vec![];
+        let mut values = vec![];
+        for (n, nv) in vars.iter() {
+            if nv.is_net_write_pending() {
+                names.push(*n);
+                values.push(nv.net_get().clone());
+            }
+        }
+        if names.is_empty() { return Ok(()) }
+        let pack = c.setvars(dev.ip, mac, key, &names, &values)?;
+        for (n, v) in pack.opt.into_iter().zip(pack.p.into_iter()) {
+            if let Some(nv) = vars::name_of(&n).and_then(|n| vars.get_mut(&n)) {
+                nv.clear_net_write_pending();
+                nv.net_set(v);
+            }
+        }
+        Ok(())
+    }
+
+
+    fn apply_dev<T: NetVar>(mac: &MacAddr, dev: &mut Device, c: &GreeClient, op: &mut Op<'_, T>) -> Result<()> {
+        Self::bindc(mac, dev, c)?;
+        match op {
+            Op::Bind => Ok(()),
+            Op::NetRead(vars) => Self::net_read(mac, dev, c, *vars),
+            Op::NetWrite(vars) => Self::net_write(mac, dev, c, *vars)
+        }
+    }
+
+    fn apply<T: NetVar>(&mut self, target: &String, op: &mut Op<'_, T>) -> Result<()> {
+        let mac = self.s.aliases.get(target).unwrap_or(target);
+        let dev = self.s.devices.get_mut(mac).ok_or_else(||"not found")?;
+        Self::apply_dev(mac, dev, &self.c, op)
+    }
+
+    /// applies Op to target; retries after forced scan on failure
+    fn apply_retrying<T: NetVar>(&mut self, target: &String, mut op: Op<'_, T>) -> Result<()> {
+        let () = self.scan(false)?;
+        let r = self.apply(target, &mut op);
+        if r.is_ok() { return Ok(());}
+        let () = self.scan(true)?;        
+        self.apply(target, &mut op)
+    }
 }
 
 pub struct Gree {
-    gt: GreeInternal,
+    g: GreeInternal,
 }
 
 impl Gree {
 
-    pub fn new() -> Result<Self> { 
-        Ok(Self { gt: GreeInternal::new()? })
+    pub fn new() -> Result<Self> {
+        Ok(Self { g: GreeInternal::new(Default::default())? })
     }
 
-    pub fn tree(&self) -> &Tree { &self.gt.t }
-
-    fn status(mac: &MacAddr, dev: &mut Device, c: &GreeClient, vars: &[&str]) -> Result<()> {
-        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
-        let pack = c.status(dev.ip, mac, key, vars)?;
-        dev.status_ind(SystemTime::now(), pack.cols, pack.dat);
-        Ok(())
+    pub fn from_config(cfg: GreeConfig) -> Result<Self> { 
+        Ok(Self { g: GreeInternal::new(cfg)? })
     }
 
-    fn setvars(mac: &MacAddr, dev: &mut Device, c: &GreeClient, vars: &[&'static str], vals: &[Value]) -> Result<()> {
-        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
-        let pack = c.setvars(dev.ip, mac, key, vars, vals)?;
-        dev.status_ind(SystemTime::now(), pack.opt, pack.p);
-        Ok(())
+    pub fn state(&self) -> &GreeState { &self.g.s }
+
+    /// Performs scan and fills state
+    pub fn scan(&mut self) -> Result<()> { 
+        self.g.scan(false) 
     }
 
-    /// Reads variables from the network
-    pub fn sync(&mut self, scope: Option<&MacAddr>, vars: &[&'static str]) {
-        self.sync_and_visit(scope, vars, |_,_|())
+    /// Binds 
+    pub fn bind(&mut self, target: &String) -> Result<()> { 
+        self.g.apply_retrying(target, Op::<SimpleNetVar>::Bind) 
     }
 
-    /// For each device in scope, reads vars from the network and calls visitor
-    pub fn sync_and_visit(&mut self, scope: Option<&MacAddr>, vars: &[&'static str], mut visitor: impl FnMut(&MacAddr, &Device)) {
-        let r = self.gt.op(scope, |mac: &MacAddr, dev: &mut Device, c: &GreeClient| -> Result<()> {
-            Self::status(mac, dev, c, vars)?;
-            visitor(mac, dev);
-            Ok(())
-        });
-        if let Err(e) = r {
-            error!("sync: {e}")
-        }
+    /// Reads pending variables from the network
+    pub fn net_read<T: NetVar>(&mut self, target: &String, vars: &mut NetVarBag<T>) -> Result<()> { 
+        self.g.apply_retrying(target, Op::NetRead(vars)) 
     }
 
-    pub fn set(&mut self, scope: Option<&MacAddr>, vars: &[&'static str], vals: &[Value]) {
-        let r = self.gt.op(scope, |mac: &MacAddr, dev: &mut Device, c: &GreeClient| -> Result<()> {
-            Self::setvars(mac, dev, c, vars, vals)
-        });
-        if let Err(e) = r {
-            error!("update: {e}")
-        }
+    /// Writes pending variables to the network
+    pub fn net_write<T: NetVar>(&mut self, target: &String, vars: &mut NetVarBag<T>)  -> Result<()> {
+        self.g.apply_retrying(target, Op::NetWrite(vars))
     }
-
 
 }
 

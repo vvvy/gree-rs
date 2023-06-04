@@ -1,11 +1,11 @@
 mod apdu;
-mod tree;
+mod state;
 pub mod sync_client;
 pub mod async_client;
 
 
 pub use apdu::{vars, vars::DEFAULT as DEFAULT_VARS};
-pub use tree::Tree;
+pub use state::*;
 pub use serde_json::Value;
 
 use apdu::*;

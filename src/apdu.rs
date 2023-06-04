@@ -16,10 +16,13 @@ type Int = i32;
 
 
 pub mod vars {
-///    Pow: power state of the device
-///        0: off
-///        1: on
-pub const POW: &str = "Pow";
+
+pub type VarName = &'static str;
+
+/// Pow: power state of the device
+/// * 0: off
+/// * 1: on
+pub const POW: VarName = "Pow";
 
 #[repr(i32)]
 pub enum Pow {
@@ -27,13 +30,13 @@ pub enum Pow {
     On = 1
 }
 
-///    Mod: mode of operation
-///        0: auto
-///        1: cool
-///        2: dry
-///        3: fan
-///        4: heat
-pub const MOD: &str = "Mod";
+/// Mod: mode of operation
+/// * 0: auto
+/// * 1: cool
+/// * 2: dry
+/// * 3: fan
+/// * 4: heat
+pub const MOD: VarName = "Mod";
 
 #[repr(i32)]
 pub enum Mod {
@@ -45,14 +48,14 @@ pub enum Mod {
 }
 
 /// "SetTem" and "TemUn": set temperature and temperature unit
-///    if TemUn = 0, SetTem is the set temperature in Celsius
-///    if TemUn = 1, SetTem is the set temperature is Fahrenheit
-pub const SET_TEM: &str = "SetTem";
+/// * if TemUn = 0, SetTem is the set temperature in Celsius
+/// * if TemUn = 1, SetTem is the set temperature is Fahrenheit
+pub const SET_TEM: VarName = "SetTem";
 
 /// "SetTem" and "TemUn": set temperature and temperature unit
-///    if TemUn = 0, SetTem is the set temperature in Celsius
-///    if TemUn = 1, SetTem is the set temperature is Fahrenheit
-pub const TEM_UN: &str = "TemUn";
+/// * if TemUn = 0, SetTem is the set temperature in Celsius
+/// * if TemUn = 1, SetTem is the set temperature is Fahrenheit
+pub const TEM_UN: VarName = "TemUn";
 
 #[repr(i32)]
 pub enum TemUn {
@@ -61,14 +64,15 @@ pub enum TemUn {
 }
 
 /// WdSpd: fan speed
-/// 0: auto
-/// 1: low
-/// 2: medium-low (not available on 3-speed units)
-/// 3: medium
-/// 4: medium-high (not available on 3-speed units)
-/// 5: high
-pub const WD_SPD: &str = "WdSpd";
+/// * 0: auto
+/// * 1: low
+/// * 2: medium-low (not available on 3-speed units)
+/// * 3: medium
+/// * 4: medium-high (not available on 3-speed units)
+/// * 5: high
+pub const WD_SPD: VarName = "WdSpd";
 
+#[repr(i32)]
 pub enum WdSpd {
     Auto = 0,
     Low = 1,
@@ -78,85 +82,210 @@ pub enum WdSpd {
     High = 5,
 }
 
-/* 
-    Air: controls the state of the fresh air valve (not available on all units)
-        0: off
-        1: on
+/// Air: controls the state of the fresh air valve (not available on all units)
+/// * 0: off
+/// * 1: on
+pub const AIR: VarName = "Air";
 
-    Blo: "Blow" or "X-Fan", this function keeps the fan running for a while after shutting down. Only usable in Dry and Cool mode
+#[repr(i32)]
+pub enum Air {
+    Off = 0,
+    On = 1
+}
 
-    Health: controls Health ("Cold plasma") mode, only for devices equipped with "anion generator", which absorbs dust and kills bacteria
-        0: off
-        1: on
+/// Blo: "Blow" or "X-Fan", this function keeps the fan running for a while after shutting down. Only usable in Dry and Cool mode
+pub const BLO: &str = "Blo";
 
-    SwhSlp: sleep mode, which gradually changes the temperature in Cool, Heat and Dry mode
-        0: off
-        1: on
+/// Health: controls Health ("Cold plasma") mode, only for devices equipped with "anion generator", which absorbs dust and kills bacteria
+/// * 0: off
+/// * 1: on
+pub const HEALTH: VarName = "Health";
 
-    Lig: turns all indicators and the display on the unit on or off
-        0: off
-        1: on
+#[repr(i32)]
+pub enum Health {
+    Off = 0,
+    On = 1
+}
 
-    SwingLfRig: controls the swing mode of the horizontal air blades (available on limited number of devices, e.g. some Cooper & Hunter units - thanks to mvmn)
-        0: default
-        1: full swing
-        2-6: fixed position from leftmost to rightmost
-        Full swing, like for SwUpDn is not supported
+/// SwhSlp: sleep mode, which gradually changes the temperature in Cool, Heat and Dry mode
+/// * 0: off
+/// * 1: on
+pub const SWH_SLP: VarName = "SwhSlp";
 
-    SwUpDn: controls the swing mode of the vertical air blades
-        0: default
-        1: swing in full range
-        2: fixed in the upmost position (1/5)
-        3: fixed in the middle-up position (2/5)
-        4: fixed in the middle position (3/5)
-        5: fixed in the middle-low position (4/5)
-        6: fixed in the lowest position (5/5)
-        7: swing in the downmost region (5/5)
-        8: swing in the middle-low region (4/5)
-        9: swing in the middle region (3/5)
-        10: swing in the middle-up region (2/5)
-        11: swing in the upmost region (1/5)
+#[repr(i32)]
+pub enum SwhSlp {
+    Off = 0,
+    On = 1
+}
 
-    Quiet: controls the Quiet mode which slows down the fan to its most quiet speed. Not available in Dry and Fan mode.
-        0: off
-        1: on
+/// Lig: turns all indicators and the display on the unit on or off
+/// * 0: off
+/// * 1: on
+pub const LIG: VarName = "Lig";
 
-    Tur: sets fan speed to the maximum. Fan speed cannot be changed while active and only available in Dry and Cool mode.
-        0: off
-        1: on
+#[repr(i32)]
+pub enum Lig {
+    Off = 0,
+    On = 1
+}
 
-    StHt: maintain the room temperature steadily at 8°C and prevent the room from freezing by heating operation when nobody is at home for long in severe winter (from http://www.gree.ca/en/features)
+/// SwingLfRig: controls the swing mode of the horizontal air blades (available on limited number of devices, e.g. some Cooper & Hunter units - thanks to mvmn)
+/// * 0: default
+/// * 1: full swing
+/// * 2-6: fixed position from leftmost to rightmost
+/// 
+/// Full swing, like for SwUpDn is not supported
+pub const SWING_LF_RIG: VarName = "SwingLfRig";
 
-    HeatCoolType: unknown
+#[repr(i32)]
+pub enum SwingLfRig {
+    Default = 0,
+    Full = 1,
+    Pos0 = 2,
+    Pos1 = 3,
+    Pos2 = 4,
+    Pos3 = 5,
+    Pos4 = 6
+}
 
-    TemRec: this bit is used to distinguish between two Fahrenheit values (see Setting the temperature using Fahrenheit section below)
 
-    SvSt: energy saving mode
-        0: off
-        1: on
-    */
+/// SwUpDn: controls the swing mode of the vertical air blades
+/// * 0: default
+/// * 1: swing in full range
+/// * 2: fixed in the upmost position (1/5)
+/// * 3: fixed in the middle-up position (2/5)
+/// * 4: fixed in the middle position (3/5)
+/// * 5: fixed in the middle-low position (4/5)
+/// * 6: fixed in the lowest position (5/5)
+/// * 7: swing in the downmost region (5/5)
+/// * 8: swing in the middle-low region (4/5)
+/// * 9: swing in the middle region (3/5)
+/// * 10: swing in the middle-up region (2/5)
+/// * 11: swing in the upmost region (1/5)
+pub const SW_UP_DN: VarName = "SwUpDn";
 
-    pub const ALL: [&'static str; 5] = [
-        POW, 
-        MOD, 
-        SET_TEM, 
-        TEM_UN, 
-        WD_SPD
-    ];
+#[repr(i32)]
+pub enum SwUpDn {
+    Default = 0,
+    Full = 1,
+    Fixed1 = 2,
+    Fixed2 = 3,
+    Fixed3 = 4,
+    Fixed4 = 5,
+    Fixed5 = 6,
+    Swing5 = 7,
+    Swing4 = 8,
+    Swing3 = 9,
+    Swing2 = 10,
+    Swing1 = 11
+}
 
-    pub const DEFAULT: [&'static str; 5] = [POW, MOD, SET_TEM, TEM_UN, WD_SPD];
+/// Quiet: controls the Quiet mode which slows down the fan to its most quiet speed. Not available in Dry and Fan mode.
+/// * 0: off
+/// * 1: on
+pub const QUIET: VarName = "Quiet";
 
-    /// Internalizes name of variable
-    pub fn name_of(n: &str) -> Option<&'static str> {
-        match n {
-            POW => Some(POW),
-            MOD => Some(MOD),
-            SET_TEM => Some(SET_TEM),
-            TEM_UN => Some(TEM_UN),
-            WD_SPD => Some(WD_SPD),
-            _ => None,
-        }
+#[repr(i32)]
+pub enum Quiet {
+    Off = 0,
+    On = 1
+}
+
+/// Tur: sets fan speed to the maximum. Fan speed cannot be changed while active and only available in Dry and Cool mode.
+/// * 0: off
+/// * 1: on
+pub const TUR: VarName = "Tur";
+
+#[repr(i32)]
+pub enum Tur {
+    Off = 0,
+    On = 1
+}
+
+/// StHt: maintain the room temperature steadily at 8°C and prevent the room from freezing by heating operation when nobody 
+/// is at home for long in severe winter (from http://www.gree.ca/en/features)
+pub const ST_HT: VarName = "StHt"; 
+
+/// HeatCoolType: unknown
+pub const HEAT_COOL_TYPE: VarName = "HeatCoolType"; 
+
+/// TemRec: this bit is used to distinguish between two Fahrenheit values (see Setting the temperature using Fahrenheit section below)
+pub const TEM_REC: VarName = "TemRec"; 
+
+/// SvSt: energy saving mode
+/// * 0: off
+/// * 1: on
+pub const SV_ST: VarName = "SvSt";
+
+#[repr(i32)]
+pub enum SvSt {
+    Off = 0,
+    On = 1
+}
+
+/// TemSen: internal temperature sensor value (READ ONLY)
+/// 
+/// The value is in celsius and has an offset of +40 to avoid using negative values. 
+/// For example if you get 65 from the device it means the current temperature is 65 - 40 = 25.
+pub const TEM_SEN: VarName = "TemSen";
+
+/// time: read or set device time. Requires custom pack and must be used separately from other vars.
+/// 
+/// Format: "2018-05-11 19:42:01"
+pub const TIME: VarName = "time";
+
+//------------------------------------------------------------------------------------------------------------------------------
+pub const ALL: [VarName; 20] = [
+    POW, 
+    MOD, 
+    SET_TEM, 
+    TEM_UN, 
+    WD_SPD,
+    AIR,
+    BLO,
+    HEALTH,
+    SWH_SLP,
+    LIG,
+    SWING_LF_RIG,
+    SW_UP_DN,
+    QUIET,
+    TUR,
+    ST_HT,
+    HEAT_COOL_TYPE,
+    TEM_REC,
+    SV_ST,
+    TEM_SEN,
+    TIME,
+];
+
+pub const DEFAULT: [VarName; 5] = [POW, MOD, SET_TEM, TEM_UN, WD_SPD];
+
+/// Internalizes name of variable
+pub fn name_of(n: &str) -> Option<VarName> {
+    match n {
+        POW => Some(POW),
+        MOD => Some(MOD),
+        SET_TEM => Some(SET_TEM),
+        TEM_UN => Some(TEM_UN),
+        WD_SPD => Some(WD_SPD),
+        AIR => Some(AIR),
+        BLO => Some(BLO),
+        HEALTH => Some(HEALTH),
+        SWH_SLP => Some(SWH_SLP),
+        LIG => Some(LIG),
+        SWING_LF_RIG => Some(SWING_LF_RIG),
+        SW_UP_DN => Some(SW_UP_DN),
+        QUIET => Some(QUIET),
+        TUR => Some(TUR),
+        ST_HT => Some(ST_HT),
+        HEAT_COOL_TYPE => Some(HEAT_COOL_TYPE),
+        TEM_REC => Some(TEM_REC),
+        SV_ST => Some(SV_ST),
+        TEM_SEN => Some(TEM_SEN),
+        TIME => Some(TIME),
+        _ => None,
     }
+}
 
 }
 
@@ -439,7 +568,7 @@ pub struct CommandResponsePack {
     pub r: Int,
     pub opt: Vec<String>,
     pub p: Vec<Value>,
-    
+
     #[serde(default)]
     pub val: Vec<Value>,
 }
