@@ -11,6 +11,7 @@ pub struct GreeConfig {
     pub bcast_addr: IpAddr,
     pub min_scan_age: Duration,
     pub max_scan_age: Duration,
+    pub aliases: HashMap<String, MacAddr>,
 }
 
 impl GreeConfig {
@@ -26,18 +27,18 @@ impl Default for GreeConfig {
             max_count: Self::DEFAULT_MAX_COUNT, 
             bcast_addr: Self::DEFAULT_BROADCAST_ADDR.into(), 
             min_scan_age: Self::DEFAULT_MIN_SCAN_AGE, 
-            max_scan_age: Self::DEFAULT_MAX_SCAN_AGE
+            max_scan_age: Self::DEFAULT_MAX_SCAN_AGE,
+            aliases: HashMap::new(),
         }
     }
 }
 
 pub struct GreeState {
-    pub aliases: HashMap<String, MacAddr>,
     pub devices: HashMap<MacAddr, Device>,
 }
 
 impl GreeState {
-    pub fn new() -> Self { Self { devices: HashMap::new(), aliases: HashMap::new() } }
+    pub fn new() -> Self { Self { devices: HashMap::new() } }
     pub fn scan_ind(&mut self, scan_result: Vec<(IpAddr, GenericMessage, ScanResponsePack)>) {
         self.devices = scan_result.into_iter().map(|(ip, _, scan_result)| (
             scan_result.mac.clone(),

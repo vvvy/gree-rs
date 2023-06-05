@@ -185,7 +185,7 @@ impl GreeInternal {
     }
 
     fn apply<T: NetVar>(&mut self, target: &String, op: &mut Op<'_, T>) -> Result<()> {
-        let mac = self.s.aliases.get(target).unwrap_or(target);
+        let mac = self.cfg.aliases.get(target).unwrap_or(target);
         let dev = self.s.devices.get_mut(mac).ok_or_else(||"not found")?;
         Self::apply_dev(mac, dev, &self.c, op)
     }
