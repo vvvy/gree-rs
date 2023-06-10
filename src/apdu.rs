@@ -14,21 +14,23 @@ use serde_json::Value;
 use crate::*;
 type Int = i32;
 
-
 pub mod vars {
 
 pub type VarName = &'static str;
+
+#[repr(i32)]
+pub enum OnOff {
+    Off = 0,
+    On = 1
+}
+
 
 /// Pow: power state of the device
 /// * 0: off
 /// * 1: on
 pub const POW: VarName = "Pow";
 
-#[repr(i32)]
-pub enum Pow {
-    Off = 0,
-    On = 1
-}
+pub type Pow = OnOff;
 
 /// Mod: mode of operation
 /// * 0: auto
@@ -87,47 +89,33 @@ pub enum WdSpd {
 /// * 1: on
 pub const AIR: VarName = "Air";
 
-#[repr(i32)]
-pub enum Air {
-    Off = 0,
-    On = 1
-}
+pub type Air = OnOff;
 
 /// Blo: "Blow" or "X-Fan", this function keeps the fan running for a while after shutting down. Only usable in Dry and Cool mode
 pub const BLO: &str = "Blo";
+
+pub type Blo = OnOff;
 
 /// Health: controls Health ("Cold plasma") mode, only for devices equipped with "anion generator", which absorbs dust and kills bacteria
 /// * 0: off
 /// * 1: on
 pub const HEALTH: VarName = "Health";
 
-#[repr(i32)]
-pub enum Health {
-    Off = 0,
-    On = 1
-}
+pub type Health = OnOff;
 
 /// SwhSlp: sleep mode, which gradually changes the temperature in Cool, Heat and Dry mode
 /// * 0: off
 /// * 1: on
 pub const SWH_SLP: VarName = "SwhSlp";
 
-#[repr(i32)]
-pub enum SwhSlp {
-    Off = 0,
-    On = 1
-}
+pub type SwhSlp = OnOff;
 
 /// Lig: turns all indicators and the display on the unit on or off
 /// * 0: off
 /// * 1: on
 pub const LIG: VarName = "Lig";
 
-#[repr(i32)]
-pub enum Lig {
-    Off = 0,
-    On = 1
-}
+pub type Lig = OnOff;
 
 /// SwingLfRig: controls the swing mode of the horizontal air blades (available on limited number of devices, e.g. some Cooper & Hunter units - thanks to mvmn)
 /// * 0: default
@@ -185,22 +173,14 @@ pub enum SwUpDn {
 /// * 1: on
 pub const QUIET: VarName = "Quiet";
 
-#[repr(i32)]
-pub enum Quiet {
-    Off = 0,
-    On = 1
-}
+pub type Quiet = OnOff;
 
 /// Tur: sets fan speed to the maximum. Fan speed cannot be changed while active and only available in Dry and Cool mode.
 /// * 0: off
 /// * 1: on
 pub const TUR: VarName = "Tur";
 
-#[repr(i32)]
-pub enum Tur {
-    Off = 0,
-    On = 1
-}
+pub type Tur = OnOff;
 
 /// StHt: maintain the room temperature steadily at 8°C and prevent the room from freezing by heating operation when nobody 
 /// is at home for long in severe winter (from http://www.gree.ca/en/features)
@@ -217,11 +197,7 @@ pub const TEM_REC: VarName = "TemRec";
 /// * 1: on
 pub const SV_ST: VarName = "SvSt";
 
-#[repr(i32)]
-pub enum SvSt {
-    Off = 0,
-    On = 1
-}
+pub type SvSt = OnOff;
 
 /// TemSen: internal temperature sensor value (READ ONLY)
 /// 
@@ -285,6 +261,35 @@ pub fn name_of(n: &str) -> Option<VarName> {
         TIME => Some(TIME),
         _ => None,
     }
+}
+
+use crate::{Result, Value, Error};
+
+/// Parses value for the specified variable
+pub fn parse_value(name: VarName, value: impl AsRef<str>) -> Result<Value> {
+    Ok(match name {
+        //Arbitrary string so far (TODO: enforce format)
+        TIME => {
+            Value::String(value.as_ref().to_owned())
+        }
+        //{0,1}
+        POW | TEM_UN | AIR | BLO | HEALTH | SWH_SLP | LIG | QUIET | TUR | SV_ST | ST_HT => {
+            let w: u8 = value.as_ref().parse()?;
+            if w > 1 { return Err(Error::invalid_value(name, value.as_ref())) }
+            Value::Number(w.into())
+        }
+        //u8
+        MOD | SET_TEM | TEM_REC | WD_SPD | SWING_LF_RIG | SW_UP_DN  => {
+            let w: u8 = value.as_ref().parse()?;
+            Value::Number(w.into())
+        }
+        //the rest is assumed string
+        _ => {
+            //let w: u8 = value.as_ref().parse()?;
+            //Value::Number(w.into())
+            value.as_ref().into()
+        }
+    })
 }
 
 }

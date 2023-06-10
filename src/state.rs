@@ -2,7 +2,7 @@ use std::{time::Duration, collections::HashMap, net::IpAddr};
 
 use serde_json::Value;
 
-use crate::{apdu::{ScanResponsePack, GenericMessage, BindResponsePack}, vars::VarName};
+use crate::{*, apdu::{ScanResponsePack, GenericMessage, BindResponsePack}, vars::VarName};
 
 pub type MacAddr = String;
 
@@ -81,6 +81,21 @@ impl SimpleNetVar {
         Self { value: Value::Null, net_read_pending: true, net_write_pending: false }
     }
 
+    pub fn add_nv_to(mut bag: NetVarBag<Self>, (name, value): (impl AsRef<str>, impl AsRef<str>)) -> Result<NetVarBag<Self>> {
+        let name = vars::name_of(name.as_ref())
+            .ok_or_else(|| Error::InvalidVar(name.as_ref().to_owned()))?;
+        let value = vars::parse_value(name, value)?;
+        bag.insert(name, Self::from_value(value));
+        Ok(bag)
+    }
+
+    pub fn add_n_to(mut bag: NetVarBag<Self>, name: impl AsRef<str>) -> Result<NetVarBag<Self>> {
+        let name = vars::name_of(name.as_ref())
+            .ok_or_else(|| Error::InvalidVar(name.as_ref().to_owned()))?;
+        bag.insert(name, Self::new());
+        Ok(bag)
+    }
+
     pub fn from_value(value: Value) -> Self {
         Self { value, net_read_pending: false, net_write_pending: true }
     }
@@ -107,20 +122,31 @@ impl NetVar for SimpleNetVar {
     fn clear_net_write_pending(&mut self) { self.net_write_pending = false }
 }
 
-impl From<i32> for SimpleNetVar {
-    fn from(value: i32) -> Self {
-        Self::from_value(value.into())
-    }
-}
-
-impl From<&str> for SimpleNetVar {
-    fn from(value: &str) -> Self {
-        Self::from_value(value.into())
-    }
-}
-
 
 pub type NetVarBag<T> = HashMap<VarName, T>;
+
+pub fn net_var_bag_from_names<'t>(mut ns: impl Iterator<Item = &'t String>) -> Result<NetVarBag<SimpleNetVar>> {
+    ns.try_fold(std::collections::HashMap::new(), SimpleNetVar::add_n_to)
+}
+
+pub fn net_var_bag_from_nvs(nvs: HashMap<String, String>) -> Result<NetVarBag<SimpleNetVar>> {
+    nvs.into_iter().try_fold(std::collections::HashMap::new(), SimpleNetVar::add_nv_to)
+}
+
+pub fn net_var_bag_to_json<T: NetVar>(b: &NetVarBag<T>) -> HashMap<VarName, Value> {
+    b.into_iter().map(|(k, v)| (*k, v.net_get().clone())).collect()
+}
+
+/// Constructs NetVarBag of SimpleNetVar s, for reading or writing
+#[macro_export]
+macro_rules! net_var_bag {
+    ($($var:expr => $val:expr),+) => {
+        [$(($var, $val)),+].into_iter().try_fold(std::collections::HashMap::new(), SimpleNetVar::add_nv_to)
+    };
+    ($($var:expr),+) => {
+        [$($var),+].into_iter().try_fold(std::collections::HashMap::new(), SimpleNetVar::add_n_to)
+    };
+}
 
 /// NetVar Operation
 #[derive(Debug)]

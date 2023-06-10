@@ -137,7 +137,7 @@ impl GreeInternal {
 
 
     fn net_read<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
-        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
+        let key = dev.key.as_ref().ok_or_else(|| Error::mac_not_bound(mac))?;
         let names: Vec<VarName> = vars
             .iter()
             .filter_map(|(name, nv)| if nv.is_net_read_pending() { Some(*name) } else { None })
@@ -153,7 +153,7 @@ impl GreeInternal {
     }
 
     fn net_write<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
-        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
+        let key = dev.key.as_ref().ok_or_else(|| Error::mac_not_bound(mac))?;
 
         let mut names = vec![];
         let mut values = vec![];
@@ -186,7 +186,7 @@ impl GreeInternal {
 
     fn apply<T: NetVar>(&mut self, target: &String, op: &mut Op<'_, T>) -> Result<()> {
         let mac = self.cfg.aliases.get(target).unwrap_or(target);
-        let dev = self.s.devices.get_mut(mac).ok_or_else(||"not found")?;
+        let dev = self.s.devices.get_mut(mac).ok_or_else(|| Error::not_found(target))?;
         Self::apply_dev(mac, dev, &self.c, op)
     }
 

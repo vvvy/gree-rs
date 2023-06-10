@@ -30,7 +30,7 @@ impl GreeClient {
         let mut b = [0u8; 2000];
         let (len, addr) = select! {
             la = self.s.recv_from(&mut b) => { la? }
-            _ = time::sleep(self.recv_timeout) => { Err("timeout")? }
+            _ = time::sleep(self.recv_timeout) => { Err(Error::ResponseTimeout)? }
         };
 
         trace!("[{}] raw: {}", addr, String::from_utf8_lossy(&b[..len]));
@@ -134,7 +134,7 @@ impl GreeInternal {
     }
 
     async fn net_read<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
-        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
+        let key = dev.key.as_ref().ok_or_else(|| Error::mac_not_bound(mac))?;
         let names: Vec<VarName> = vars
             .iter()
             .filter_map(|(name, nv)| if nv.is_net_read_pending() { Some(*name) } else { None })
@@ -150,7 +150,7 @@ impl GreeInternal {
     }
 
     async fn net_write<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
-        let key = dev.key.as_ref().ok_or_else(|| format!("{mac} not bound"))?;
+        let key = dev.key.as_ref().ok_or_else(|| Error::mac_not_bound(mac))?;
 
         let mut names = vec![];
         let mut values = vec![];
@@ -180,9 +180,15 @@ impl GreeInternal {
         }
     }
 
+    fn with_device<R>(&self, target: &String, f: impl FnOnce(&Device) -> R) -> Result<R> {
+        let mac = self.cfg.aliases.get(target).unwrap_or(target);
+        let dev = self.s.devices.get(mac).ok_or_else(||Error::not_found(target))?;
+        Ok(f(dev))    
+    }
+
     async fn apply<T: NetVar>(&mut self, target: &String, op: &mut Op<'_, T>) -> Result<()> {
         let mac = self.cfg.aliases.get(target).unwrap_or(target);
-        let dev = self.s.devices.get_mut(mac).ok_or_else(||"not found")?;
+        let dev = self.s.devices.get_mut(mac).ok_or_else(||Error::not_found(target))?;
         Self::apply_dev(mac, dev, &self.c, op).await
     }
 
@@ -212,6 +218,14 @@ impl Gree {
     }
 
     pub fn state(&self) -> &GreeState { &self.g.s }
+
+    pub fn with_state<R>(&self, f: impl FnOnce(&GreeState) -> R) -> R {
+        f(&self.g.s)
+    }
+
+    pub fn with_device<R>(&self, target: &String, f: impl FnOnce(&Device) -> R) -> Result<R> {
+        self.g.with_device(target, f)
+    }
 
     /// Performs scan and fills state
     pub async fn scan(&mut self) -> Result<()> { 

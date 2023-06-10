@@ -1,6 +1,7 @@
 use gree::{*, async_client::*};
 use log::info;
-use std::{net::{IpAddr, Ipv4Addr}, str::FromStr};
+use serde_derive::Serialize;
+use std::{net::{IpAddr, Ipv4Addr}, str::FromStr, convert::Infallible};
 use warp::Filter;
 
 const BCAST_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 255));
@@ -148,13 +149,7 @@ async fn main() -> Result<()> {
             println!("{r:?}");            
         }
         Some(Op::Service) => {
-            let port = 7777;
-            let addr = [127, 0, 0, 1];
-            let hello = warp::path!("hello" / String)
-                .map(|name| format!("Hello, {}!", name));
-            warp::serve(hello)
-                .run((addr, port))
-                .await;
+            async_service(args).await?;
         }
         Some(Op::Help) | None => {
             help()
@@ -163,3 +158,121 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+
+async fn async_service(args: Args) -> Result<()> {
+    use tokio::sync::Mutex;
+    use std::sync::Arc;
+    use warp as w;
+
+    type HMSS = std::collections::HashMap<String,String>;
+
+    let port = 7777;
+    let addr = [127, 0, 0, 1];
+
+    let mut gree_cfg = GreeConfig::default();
+    gree_cfg.bcast_addr = args.bcast;
+    gree_cfg.max_count = args.count;
+
+    let gree = Gree::from_config(gree_cfg).await?;
+    let gree = Arc::new(Mutex::new(gree));
+
+    fn with_gree(gree: &Arc<Mutex<Gree>>) -> impl Filter<Extract = (Arc<Mutex<Gree>>,), Error = std::convert::Infallible> + Clone {
+        let gree = gree.clone();
+        w::any().map(move || gree.clone())
+    }
+
+    #[derive(Debug)]
+    struct E { e: Error }
+    impl w::reject::Reject for E { }
+    impl E {
+        fn custom(e: Error) -> w::reject::Rejection {
+            w::reject::custom(E { e })
+        }
+
+        async fn handle_rejection(err: w::Rejection) -> std::result::Result<impl w::Reply, Infallible> {
+            use warp::hyper::StatusCode;
+        
+            let (code, message) = if let Some(e) = err.find::<E>() {
+                let code = match &e.e {
+                    Error::NotFound(_) => StatusCode::NOT_FOUND,
+                    Error::Io(_) | Error::ResponseTimeout | Error::RecvTimeout => StatusCode::SERVICE_UNAVAILABLE,
+                    _ => StatusCode::BAD_REQUEST
+                };
+                (code, format!("{}", &e.e))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, "UNKNOWN REJECTION".to_owned())
+            };
+        
+            /// An API error serializable to JSON.
+            #[derive(Serialize)]
+            struct ErrorMessage {
+                code: u16,
+                message: String,
+            }
+        
+            let json = warp::reply::json(&ErrorMessage {
+                code: code.into(),
+                message,
+            });
+            Ok(warp::reply::with_status(json, code))
+        }
+    }
+
+    #[derive(Serialize)]
+    struct DevInfo { mac: String, ip: String  }
+
+    let scan = w::path!("scan")
+        .and(with_gree(&gree))
+        .and_then(|gree: Arc<Mutex<Gree>>| async move { 
+            gree
+            .lock().await
+            .scan().await
+            .map(|_| w::reply::reply())
+            .map_err(E::custom)
+        });
+    let population = w::path!("dev")
+        .and(with_gree(&gree))
+        .and_then(|gree: Arc<Mutex<Gree>>| async move { 
+            let devnames: Vec<String> = gree.lock().await.state().devices.keys().map(|w|w.to_owned()).collect();
+            let rv: std::result::Result<_, w::Rejection> = Ok(w::reply::json(&devnames));
+            rv
+        });
+    let devinfo = w::path!("dev" / String)
+        .and(with_gree(&gree))
+        .and_then(|dev, gree: Arc<Mutex<Gree>>| async move { 
+            gree
+            .lock().await
+            .with_device(&dev, |dev| DevInfo { mac: dev.scan_result.mac.clone(), ip: dev.ip.to_string() })
+            .map(|d| w::reply::json(&d))
+            .map_err(E::custom)
+        });
+    let get = w::path!("dev" / String / "get")
+        .and(w::query::<HMSS>())
+        .and(with_gree(&gree))
+        .and_then(|dev: String, vars: HMSS, gree: Arc<Mutex<Gree>>| async move { 
+            let mut bag = net_var_bag_from_names(vars.keys()).map_err(|e| E { e })?;
+            gree
+            .lock().await
+            .net_read(&dev, &mut bag).await
+            .map(|_| w::reply::json(&net_var_bag_to_json(&bag)))
+            .map_err(E::custom)
+        });
+    let set = w::path!("dev" / String / "set")
+        .and(w::query::<HMSS>())
+        .and(with_gree(&gree))
+        .and_then(|dev, vars: HMSS, gree: Arc<Mutex<Gree>>| async move {
+            let mut bag = net_var_bag_from_nvs(vars).map_err(|e| E { e })?;
+            gree
+            .lock().await
+            .net_write(&dev, &mut bag).await
+            .map(|_| w::reply::json(&net_var_bag_to_json(&bag)))
+            .map_err(E::custom)
+        });
+    w::serve(scan.or(population).or(devinfo).or(set).or(get).recover(E::handle_rejection))
+        .run((addr, port))
+        .await;
+
+    Ok(())
+}
+
