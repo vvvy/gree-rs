@@ -1,5 +1,5 @@
 //! async client (tokio-based)
-#![cfg(feature = "async_tokio")]
+#![cfg(feature = "tokio")]
 
 use std::{net::{SocketAddr, Ipv4Addr, IpAddr}, time::{Duration, Instant}};
 
