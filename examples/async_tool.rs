@@ -110,11 +110,15 @@ async fn main() -> Result<()> {
 
     let args = getcmdln();
 
-    let c = GreeClient::new().await?;
+    let mut cc = GreeClientConfig::default();
+    cc.bcast_addr = args.bcast;
+    cc.max_count = args.count;
+
+    let c = GreeClient::new(cc).await?;
 
     match args.op {
         Some(Op::Scan) => {
-            let devs = c.scan(args.bcast, args.count).await?;
+            let devs = c.scan().await?;
             for (a, s, p) in devs {
                 println!("{a}");
                 println!("{s:?}");
@@ -132,7 +136,7 @@ async fn main() -> Result<()> {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let key = args.key.expect("Must specify --key");
-            let r = c.status(ip, &mac, &key, &DEFAULT_VARS).await?;
+            let r = c.getvars(ip, &mac, &key, &DEFAULT_VARS).await?;
             println!("{r:?}");            
         }
         Some(Op::SetVars) => {
@@ -159,7 +163,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-
+/// Example usage
+/// 
+/// ```bash
+/// curl http://localhost:7777/scan
+/// curl http://localhost:7777/dev/000cc0000000/get?SetTem&Pow
+/// curl http://localhost:7777/dev/000cc0000000/set?SetTem=23&Pow=1
+/// ```
+/// 
 async fn async_service(args: Args) -> Result<()> {
     use tokio::sync::Mutex;
     use std::sync::Arc;
@@ -171,10 +182,10 @@ async fn async_service(args: Args) -> Result<()> {
     let addr = [127, 0, 0, 1];
 
     let mut gree_cfg = GreeConfig::default();
-    gree_cfg.bcast_addr = args.bcast;
-    gree_cfg.max_count = args.count;
+    gree_cfg.client_config.bcast_addr = args.bcast;
+    gree_cfg.client_config.max_count = args.count;
 
-    let gree = Gree::from_config(gree_cfg).await?;
+    let gree = Gree::new(gree_cfg).await?;
     let gree = Arc::new(Mutex::new(gree));
 
     fn with_gree(gree: &Arc<Mutex<Gree>>) -> impl Filter<Extract = (Arc<Mutex<Gree>>,), Error = std::convert::Infallible> + Clone {
@@ -261,8 +272,8 @@ async fn async_service(args: Args) -> Result<()> {
     let set = w::path!("dev" / String / "set")
         .and(w::query::<HMSS>())
         .and(with_gree(&gree))
-        .and_then(|dev, vars: HMSS, gree: Arc<Mutex<Gree>>| async move {
-            let mut bag = net_var_bag_from_nvs(vars).map_err(|e| E { e })?;
+        .and_then(|dev: String, vars: HMSS, gree: Arc<Mutex<Gree>>| async move {
+            let mut bag = net_var_bag_from_nvs(vars.iter()).map_err(|e| E { e })?;
             gree
             .lock().await
             .net_write(&dev, &mut bag).await

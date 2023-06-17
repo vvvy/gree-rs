@@ -1,4 +1,4 @@
-use std::{time::Duration, collections::HashMap, net::IpAddr};
+use std::{time::Duration, collections::HashMap, net::{IpAddr, SocketAddr, Ipv4Addr}};
 
 use serde_json::Value;
 
@@ -6,26 +6,64 @@ use crate::{*, apdu::{ScanResponsePack, GenericMessage, BindResponsePack}, vars:
 
 pub type MacAddr = String;
 
-pub struct GreeConfig {
+/// Low-level Gree client configuration
+#[derive(Debug, Clone, Copy)]
+pub struct GreeClientConfig {
+    /// Recv datagram buffer size
+    pub buffer_size: usize,
+    /// Socket recv timeout
+    pub recv_timeout: Duration,
+    /// Socket addr to bind to
+    pub socket_addr: SocketAddr,
+    /// Maximum devices to be discovered diring a scan. The scan is stopped early when this number of devices is reached.
     pub max_count: usize,
+    /// Broadcast address for the network.
     pub bcast_addr: IpAddr,
+}
+
+impl GreeClientConfig {
+    pub const DEFAULT_BUFFER_SIZE: usize = 2048;
+    pub const DEFAULT_MAX_COUNT: usize = 10;
+    pub const DEFAULT_BROADCAST_ADDR: [u8; 4] =  [10, 0, 0, 255];
+    pub const DEFAULT_RECV_TIMEOUT: Duration = Duration::from_secs(3);
+}
+
+impl Default for GreeClientConfig {
+
+    fn default() -> Self {
+        Self {
+            buffer_size: Self::DEFAULT_BUFFER_SIZE,
+            recv_timeout: Self::DEFAULT_RECV_TIMEOUT,
+            socket_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
+            max_count: Self::DEFAULT_MAX_COUNT, 
+            bcast_addr: Self::DEFAULT_BROADCAST_ADDR.into(), 
+        }
+    }
+}
+
+/// Gree network configuration
+#[derive(Debug, Clone)]
+pub struct GreeConfig {
+    /// lower level client configuration
+    pub client_config: GreeClientConfig,
+    /// Minimum scan age. A soft (unforced) scan is bypassed if the last successful scan is newer than this value. 
     pub min_scan_age: Duration,
+    /// Maximum scan age. A scan is forced if the last (successful) scan is older than this value.
     pub max_scan_age: Duration,
+    /// Aliases for the network devices
     pub aliases: HashMap<String, MacAddr>,
 }
 
 impl GreeConfig {
-    pub const DEFAULT_MAX_COUNT: usize = 10;
-    pub const DEFAULT_BROADCAST_ADDR: [u8; 4] =  [10, 0, 0, 255];
+
     pub const DEFAULT_MIN_SCAN_AGE: Duration = Duration::from_secs(60);
     pub const DEFAULT_MAX_SCAN_AGE: Duration = Duration::from_secs(3600 * 24);
 }
 
 impl Default for GreeConfig {
     fn default() -> Self {
-        Self { 
-            max_count: Self::DEFAULT_MAX_COUNT, 
-            bcast_addr: Self::DEFAULT_BROADCAST_ADDR.into(), 
+        Self {
+            client_config: Default::default(),
             min_scan_age: Self::DEFAULT_MIN_SCAN_AGE, 
             max_scan_age: Self::DEFAULT_MAX_SCAN_AGE,
             aliases: HashMap::new(),
@@ -33,6 +71,7 @@ impl Default for GreeConfig {
     }
 }
 
+/// State of Gree network
 pub struct GreeState {
     pub devices: HashMap<MacAddr, Device>,
 }
@@ -47,9 +86,17 @@ impl GreeState {
     }
 }
 
+/// Holds information about a Device on the network.
+/// 
+/// Devices are typically discovered during scans. The `key` field is set as a result of successful binding.
 pub struct Device {
+    /// Known IP address of the device. 
     pub ip: IpAddr,
+
+    /// Device's scan respobse
     pub scan_result: ScanResponsePack,
+
+    /// Encryption key (if bound)
     pub key: Option<String>,
 }
 
@@ -59,14 +106,20 @@ impl Device {
     }
 }
 
+
+/// Network Variable (NetVar) defines a protocol for exchanging Values with the network.
+/// 
+/// It may be considered a placeholder for a Value that can be read from or written to the network.
 pub trait NetVar {
-    //fn get_name(&self) -> &'static str;
-    /// Sets network value and clears net_read_pending
+    /// Stores the value received from the network and clears net_read_pending
     fn net_set(&mut self, value: Value);
-    /// Gets network value
+    /// Returns the value to be written to the network
     fn net_get(&self) -> &Value;
+    /// True if the value of this NetVar is supposed to be read and set from the network
     fn is_net_read_pending(&self) -> bool;
+    /// True if the value of this NetVar is supposed to be written to the network
     fn is_net_write_pending(&self) -> bool;
+    /// Signal that the value of this NV doesn't need to be written to the network anymore (typically after a successful net write)
     fn clear_net_write_pending(&mut self);
 }
 
@@ -122,22 +175,25 @@ impl NetVar for SimpleNetVar {
     fn clear_net_write_pending(&mut self) { self.net_write_pending = false }
 }
 
-
+/// A collection of network variables by internalized name
 pub type NetVarBag<T> = HashMap<VarName, T>;
 
-pub fn net_var_bag_from_names<'t>(mut ns: impl Iterator<Item = &'t String>) -> Result<NetVarBag<SimpleNetVar>> {
+/// Constructs NetVarBag from an iterator of names. The bag returned is ready to be used in a network read call.
+pub fn net_var_bag_from_names<'t, S: AsRef<str> + 't>(mut ns: impl Iterator<Item = &'t S>) -> Result<NetVarBag<SimpleNetVar>> {
     ns.try_fold(std::collections::HashMap::new(), SimpleNetVar::add_n_to)
 }
 
-pub fn net_var_bag_from_nvs(nvs: HashMap<String, String>) -> Result<NetVarBag<SimpleNetVar>> {
-    nvs.into_iter().try_fold(std::collections::HashMap::new(), SimpleNetVar::add_nv_to)
+/// Constructs NetVarBag from an iterator of (name, value) pairs. The bag returned is ready to be used in a network write call.
+pub fn net_var_bag_from_nvs<'t, S: AsRef<str> + 't>(mut nvs: impl Iterator<Item = (&'t S, &'t S)>) -> Result<NetVarBag<SimpleNetVar>> {
+    nvs.try_fold(std::collections::HashMap::new(), SimpleNetVar::add_nv_to)
 }
 
+/// Converts NetVarBag into a json. Convenient for value reporting.
 pub fn net_var_bag_to_json<T: NetVar>(b: &NetVarBag<T>) -> HashMap<VarName, Value> {
     b.into_iter().map(|(k, v)| (*k, v.net_get().clone())).collect()
 }
 
-/// Constructs NetVarBag of SimpleNetVar s, for reading or writing
+/// Constructs NetVarBag of SimpleNetVar s, for reading (from keys) or writing (from key => value pairs)
 #[macro_export]
 macro_rules! net_var_bag {
     ($($var:expr => $val:expr),+) => {

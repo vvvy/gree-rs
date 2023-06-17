@@ -1,3 +1,11 @@
+//! Controlling Gree Smart air conditioning units via Rust
+//! 
+//! This crate defines two clients, `GreeClient` and `Gree`, for each of two programming styles (synchronous and asynchronous).
+//! 
+//! See docs under [sync_client] and [async_client].
+//! 
+//! See also: <https://github.com/tomikaa87/gree-remote> - Protocol description, API in several languages, CLI in python
+
 mod apdu;
 mod state;
 pub mod sync_client;

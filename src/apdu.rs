@@ -1,3 +1,4 @@
+//! Application protocol data units
 use std::fmt::Debug;
 use std::net::IpAddr;
 
@@ -14,6 +15,7 @@ use serde_json::Value;
 use crate::*;
 type Int = i32;
 
+/// Constants and definitions for Gree parameters and enumerations for their possible values
 pub mod vars {
 
 pub type VarName = &'static str;
@@ -25,14 +27,14 @@ pub enum OnOff {
 }
 
 
-/// Pow: power state of the device
+/// `Pow`: power state of the device
 /// * 0: off
 /// * 1: on
 pub const POW: VarName = "Pow";
 
 pub type Pow = OnOff;
 
-/// Mod: mode of operation
+/// `Mod`: mode of operation
 /// * 0: auto
 /// * 1: cool
 /// * 2: dry
@@ -49,14 +51,14 @@ pub enum Mod {
     Heat = 4,
 }
 
-/// "SetTem" and "TemUn": set temperature and temperature unit
-/// * if TemUn = 0, SetTem is the set temperature in Celsius
-/// * if TemUn = 1, SetTem is the set temperature is Fahrenheit
+/// `SetTem` and `TemUn`: set temperature and temperature unit
+/// * if `TemUn` = 0, `SetTem` is the set temperature in Celsius
+/// * if `TemUn` = 1, `SetTem` is the set temperature is Fahrenheit
 pub const SET_TEM: VarName = "SetTem";
 
-/// "SetTem" and "TemUn": set temperature and temperature unit
-/// * if TemUn = 0, SetTem is the set temperature in Celsius
-/// * if TemUn = 1, SetTem is the set temperature is Fahrenheit
+/// `SetTem` and `TemUn`: set temperature and temperature unit
+/// * if `TemUn` = 0, `SetTem` is the set temperature in Celsius
+/// * if `TemUn` = 1, `SetTem` is the set temperature is Fahrenheit
 pub const TEM_UN: VarName = "TemUn";
 
 #[repr(i32)]
@@ -65,7 +67,7 @@ pub enum TemUn {
     Fahrenheit = 1,
 }
 
-/// WdSpd: fan speed
+/// `WdSpd`: fan speed
 /// * 0: auto
 /// * 1: low
 /// * 2: medium-low (not available on 3-speed units)
@@ -84,40 +86,40 @@ pub enum WdSpd {
     High = 5,
 }
 
-/// Air: controls the state of the fresh air valve (not available on all units)
+/// `Air`: controls the state of the fresh air valve (not available on all units)
 /// * 0: off
 /// * 1: on
 pub const AIR: VarName = "Air";
 
 pub type Air = OnOff;
 
-/// Blo: "Blow" or "X-Fan", this function keeps the fan running for a while after shutting down. Only usable in Dry and Cool mode
+/// `Blo`: "Blow" or "X-Fan", this function keeps the fan running for a while after shutting down. Only usable in Dry and Cool mode
 pub const BLO: &str = "Blo";
 
 pub type Blo = OnOff;
 
-/// Health: controls Health ("Cold plasma") mode, only for devices equipped with "anion generator", which absorbs dust and kills bacteria
+/// `Health`: controls Health ("Cold plasma") mode, only for devices equipped with "anion generator", which absorbs dust and kills bacteria
 /// * 0: off
 /// * 1: on
 pub const HEALTH: VarName = "Health";
 
 pub type Health = OnOff;
 
-/// SwhSlp: sleep mode, which gradually changes the temperature in Cool, Heat and Dry mode
+/// `SwhSlp`: sleep mode, which gradually changes the temperature in Cool, Heat and Dry mode
 /// * 0: off
 /// * 1: on
 pub const SWH_SLP: VarName = "SwhSlp";
 
 pub type SwhSlp = OnOff;
 
-/// Lig: turns all indicators and the display on the unit on or off
+/// `Lig`: turns all indicators and the display on the unit on or off
 /// * 0: off
 /// * 1: on
 pub const LIG: VarName = "Lig";
 
 pub type Lig = OnOff;
 
-/// SwingLfRig: controls the swing mode of the horizontal air blades (available on limited number of devices, e.g. some Cooper & Hunter units - thanks to mvmn)
+/// `SwingLfRig`: controls the swing mode of the horizontal air blades (available on limited number of devices, e.g. some Cooper & Hunter units - thanks to mvmn)
 /// * 0: default
 /// * 1: full swing
 /// * 2-6: fixed position from leftmost to rightmost
@@ -137,7 +139,7 @@ pub enum SwingLfRig {
 }
 
 
-/// SwUpDn: controls the swing mode of the vertical air blades
+/// `SwUpDn`: controls the swing mode of the vertical air blades
 /// * 0: default
 /// * 1: swing in full range
 /// * 2: fixed in the upmost position (1/5)
@@ -168,44 +170,44 @@ pub enum SwUpDn {
     Swing1 = 11
 }
 
-/// Quiet: controls the Quiet mode which slows down the fan to its most quiet speed. Not available in Dry and Fan mode.
+/// `Quiet`: controls the Quiet mode which slows down the fan to its most quiet speed. Not available in Dry and Fan mode.
 /// * 0: off
 /// * 1: on
 pub const QUIET: VarName = "Quiet";
 
 pub type Quiet = OnOff;
 
-/// Tur: sets fan speed to the maximum. Fan speed cannot be changed while active and only available in Dry and Cool mode.
+/// `Tur`: sets fan speed to the maximum. Fan speed cannot be changed while active and only available in Dry and Cool mode.
 /// * 0: off
 /// * 1: on
 pub const TUR: VarName = "Tur";
 
 pub type Tur = OnOff;
 
-/// StHt: maintain the room temperature steadily at 8°C and prevent the room from freezing by heating operation when nobody 
-/// is at home for long in severe winter (from http://www.gree.ca/en/features)
+/// `StHt`: maintain the room temperature steadily at 8°C and prevent the room from freezing by heating operation when nobody 
+/// is at home for long in severe winter (from <http://www.gree.ca/en/features>)
 pub const ST_HT: VarName = "StHt"; 
 
-/// HeatCoolType: unknown
+/// `HeatCoolType`: unknown
 pub const HEAT_COOL_TYPE: VarName = "HeatCoolType"; 
 
-/// TemRec: this bit is used to distinguish between two Fahrenheit values (see Setting the temperature using Fahrenheit section below)
+/// `TemRec`: this bit is used to distinguish between two Fahrenheit values (see Setting the temperature using Fahrenheit section below)
 pub const TEM_REC: VarName = "TemRec"; 
 
-/// SvSt: energy saving mode
+/// `SvSt`: energy saving mode
 /// * 0: off
 /// * 1: on
 pub const SV_ST: VarName = "SvSt";
 
 pub type SvSt = OnOff;
 
-/// TemSen: internal temperature sensor value (READ ONLY)
+/// `TemSen`: internal temperature sensor value (READ ONLY)
 /// 
 /// The value is in celsius and has an offset of +40 to avoid using negative values. 
 /// For example if you get 65 from the device it means the current temperature is 65 - 40 = 25.
 pub const TEM_SEN: VarName = "TemSen";
 
-/// time: read or set device time. Requires custom pack and must be used separately from other vars.
+/// `time`: read or set device time. Requires custom pack and must be used separately from other vars.
 /// 
 /// Format: "2018-05-11 19:42:01"
 pub const TIME: VarName = "time";

@@ -1,29 +1,39 @@
-//! Synchronous Gree cilent
+//! Synchronous Gree cilents
 //! 
 //! * `GreeClient` is a low-level API
 //! * `Gree` is a high-level Gree protocol client
+//! 
+//! Example usage:
+//! 
+//! ```
+//! let mut cc = GreeClientConfig::default();
+//! cc.bcast_addr = [192, 168, 0, 255].into();
+//! let c = GreeClient::new(cc)?;
+//! for (ip, _, pack) in  cc.scan()? {
+//!     println!("{ip} {pack:?}")
+//! }
+//! ```
 
-
-use std::{net::{Ipv4Addr, UdpSocket, SocketAddr, IpAddr}, time::{Duration, Instant}, sync::mpsc::{Sender, Receiver}};
+use std::{net::{UdpSocket, SocketAddr, IpAddr}, time::Instant, sync::mpsc::{Sender, Receiver}};
 use serde_json::Value;
-
 use crate::{state::*, vars::VarName};
-
 use super::*;
 
 
 /// Low-level Gree API
 /// 
 /// Uses background thread to read values from the network.
+/// 
+/// See module-level docs for a quick example.
 pub struct GreeClient {
     s: UdpSocket,
     r: Receiver<(SocketAddr, GenericMessage)>,
-    recv_timeout: Duration
+    cfg: GreeClientConfig,
 }
 
 impl GreeClient {
-    fn recv_loop(s: UdpSocket, send: Sender<(SocketAddr, GenericMessage)>) -> Result<()> {
-        let mut b = [0u8; 2048];
+    fn recv_loop(s: UdpSocket, send: Sender<(SocketAddr, GenericMessage)>, buffer_size: usize) -> Result<()> {
+        let mut b = vec![0u8; buffer_size];
         loop {
             let (len, addr) = s.recv_from(&mut b)?;
             trace!("[{}] raw: {}", addr, String::from_utf8_lossy(&b[..len]));
@@ -37,29 +47,29 @@ impl GreeClient {
         let b = serde_json::to_vec(request)?;
         self.s.send_to(&b, (ip, PORT))?;
         loop {
-            let (ra, gm) = self.r.recv_timeout(self.recv_timeout)?;
+            let (ra, gm) = self.r.recv_timeout(self.cfg.recv_timeout)?;
             if ra.ip() == ip { break Ok(gm) }
         }
     }
 
     /// Creates new client
-    pub fn new() -> Result<Self> {
-        let sa: SocketAddr = (Ipv4Addr::UNSPECIFIED, PORT + 1).into();
-        let s = UdpSocket::bind(sa)?;
+    pub fn new(cfg: GreeClientConfig) -> Result<Self> {
+        let s = UdpSocket::bind(cfg.socket_addr)?;
         let sr = s.try_clone()?;
         let (send, r) = std::sync::mpsc::channel();
-        std::thread::spawn(|| if let Err(e) = Self::recv_loop(sr, send) { error!("Recv: {e}") });
-        let recv_timeout = Duration::from_secs(3);
-        Ok(Self { s, r, recv_timeout })
+        std::thread::spawn(move || if let Err(e) = Self::recv_loop(sr, send, cfg.buffer_size) { error!("Recv: {e}") });
+        Ok(Self { s, r, cfg })
     }
 
-    pub fn scan(&self, bcast_addr: IpAddr, max_count: usize) -> Result<Vec<(IpAddr, GenericMessage, ScanResponsePack)>> {
-        self.s.send_to(scan_request(), (bcast_addr, PORT))?;
+    /// Performs network scan to discover devices. The scan is terminated either when max device count is reached,
+    /// or by timeout     
+    pub fn scan(&self) -> Result<Vec<(IpAddr, GenericMessage, ScanResponsePack)>> {
+        self.s.send_to(scan_request(), (self.cfg.bcast_addr, PORT))?;
     
         let mut rv = vec![];
     
-        for _ in 0..max_count {
-            match self.r.recv_timeout(self.recv_timeout) {
+        for _ in 0..self.cfg.max_count {
+            match self.r.recv_timeout(self.cfg.recv_timeout) {
                 Ok((addr, gm)) => {
                     let pack = handle_response(addr.ip(), &gm.pack, GENERIC_KEY)?;
                     rv.push((addr.ip(), gm, pack));
@@ -70,19 +80,22 @@ impl GreeClient {
         Ok(rv)
     }
     
+    /// Performs binding operation on a device
     pub fn bind(&self, addr: IpAddr, mac: &str) -> Result<BindResponsePack> {
         let gm = bind_request(mac, GENERIC_KEY)?;
         let ogm = self.exchange(addr, &gm)?;
         Ok(handle_response(addr, &ogm.pack, GENERIC_KEY)?)
     }
 
-    pub fn status(&self, addr: IpAddr, mac: &str, key: &str, vars: &[&str]) -> Result<StatusResponsePack> {
+    /// Reads specified variables from the device
+    pub fn getvars(&self, addr: IpAddr, mac: &str, key: &str, vars: &[&str]) -> Result<StatusResponsePack> {
         let gm = status_request(mac, key, vars)?;
         let ogm = self.exchange(addr, &gm)?;
         Ok(handle_response(addr, &ogm.pack, key)?)
     }
 
-    pub fn setvars(&self, addr: IpAddr, mac: &str, key: &str, names: &[&'static str], values: &[Value]) -> Result<CommandResponsePack> {
+    /// Writes specified variables to the device
+    pub fn setvars(&self, addr: IpAddr, mac: &str, key: &str, names: &[VarName], values: &[Value]) -> Result<CommandResponsePack> {
         let gm = setvar_request(mac, key, names, values)?;
         let ogm = self.exchange(addr, &gm)?;
         Ok(handle_response(addr, &ogm.pack, key)?)
@@ -101,7 +114,7 @@ struct GreeInternal {
 impl GreeInternal {
     pub fn new(cfg: GreeConfig) -> Result<Self> { 
         Ok(Self { 
-            c: GreeClient::new()?,
+            c: GreeClient::new(cfg.client_config)?,
             s: GreeState::new(),
             cfg,
             scan_ts: None,
@@ -118,7 +131,7 @@ impl GreeInternal {
             _ => false
         };
         if allow {
-            let result = self.c.scan(self.cfg.bcast_addr, self.cfg.max_count)?;
+            let result = self.c.scan()?;
             self.scan_ts = Some(Instant::now());
             self.s.scan_ind(result);
         } 
@@ -126,9 +139,9 @@ impl GreeInternal {
     }
 
 
-    fn bindc(mac: &MacAddr, dev: &mut Device, c: &GreeClient) -> Result<()> {
+    fn bindc(mac: &str, dev: &mut Device, c: &GreeClient) -> Result<()> {
         if dev.key.is_none() {
-            let pack = c.bind(dev.ip, mac)?;
+            let pack = c.bind(dev.ip, mac.as_ref())?;
             dev.bind_ind(pack);
         }
         Ok(())
@@ -136,14 +149,14 @@ impl GreeInternal {
 
 
 
-    fn net_read<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
+    fn net_read<T: NetVar>(mac: &str, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
         let key = dev.key.as_ref().ok_or_else(|| Error::mac_not_bound(mac))?;
         let names: Vec<VarName> = vars
             .iter()
             .filter_map(|(name, nv)| if nv.is_net_read_pending() { Some(*name) } else { None })
             .collect();
         if names.is_empty() { return Ok(()) }
-        let pack = c.status(dev.ip, mac, key, &names)?;
+        let pack = c.getvars(dev.ip, mac, key, &names)?;
         for (n, v) in pack.cols.into_iter().zip(pack.dat.into_iter()) { 
             if let Some(nv) = vars::name_of(&n).and_then(|n| vars.get_mut(n)) {
                 nv.net_set(v);
@@ -152,7 +165,7 @@ impl GreeInternal {
         Ok(())
     }
 
-    fn net_write<T: NetVar>(mac: &MacAddr, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
+    fn net_write<T: NetVar>(mac: &str, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
         let key = dev.key.as_ref().ok_or_else(|| Error::mac_not_bound(mac))?;
 
         let mut names = vec![];
@@ -175,7 +188,7 @@ impl GreeInternal {
     }
 
 
-    fn apply_dev<T: NetVar>(mac: &MacAddr, dev: &mut Device, c: &GreeClient, op: &mut Op<'_, T>) -> Result<()> {
+    fn apply_dev<T: NetVar>(mac: &str, dev: &mut Device, c: &GreeClient, op: &mut Op<'_, T>) -> Result<()> {
         Self::bindc(mac, dev, c)?;
         match op {
             Op::Bind => Ok(()),
@@ -184,14 +197,14 @@ impl GreeInternal {
         }
     }
 
-    fn apply<T: NetVar>(&mut self, target: &String, op: &mut Op<'_, T>) -> Result<()> {
-        let mac = self.cfg.aliases.get(target).unwrap_or(target);
-        let dev = self.s.devices.get_mut(mac).ok_or_else(|| Error::not_found(target))?;
+    fn apply<T: NetVar>(&mut self, target: &str, op: &mut Op<'_, T>) -> Result<()> {
+        let mac = self.cfg.aliases.get(target).map(|s| s.as_str()).unwrap_or(target);
+        let dev = self.s.devices.get_mut(mac).ok_or_else(|| Error::not_found(target.as_ref()))?;
         Self::apply_dev(mac, dev, &self.c, op)
     }
 
     /// applies Op to target; retries after forced scan on failure
-    fn apply_retrying<T: NetVar>(&mut self, target: &String, mut op: Op<'_, T>) -> Result<()> {
+    fn apply_retrying<T: NetVar>(&mut self, target: &str, mut op: Op<'_, T>) -> Result<()> {
         let () = self.scan(false)?;
         let r = self.apply(target, &mut op);
         if r.is_ok() { return Ok(());}
@@ -200,17 +213,14 @@ impl GreeInternal {
     }
 }
 
+
+/// A high-level Gree client 
 pub struct Gree {
     g: GreeInternal,
 }
 
 impl Gree {
-
-    pub fn new() -> Result<Self> {
-        Ok(Self { g: GreeInternal::new(Default::default())? })
-    }
-
-    pub fn from_config(cfg: GreeConfig) -> Result<Self> { 
+    pub fn new(cfg: GreeConfig) -> Result<Self> { 
         Ok(Self { g: GreeInternal::new(cfg)? })
     }
 
@@ -221,19 +231,24 @@ impl Gree {
         self.g.scan(false) 
     }
 
-    /// Binds 
-    pub fn bind(&mut self, target: &String) -> Result<()> { 
+    /// Binds specified target
+    pub fn bind(&mut self, target: &str) -> Result<()> { 
         self.g.apply_retrying(target, Op::<SimpleNetVar>::Bind) 
     }
 
     /// Reads pending variables from the network
-    pub fn net_read<T: NetVar>(&mut self, target: &String, vars: &mut NetVarBag<T>) -> Result<()> { 
+    pub fn net_read<T: NetVar>(&mut self, target: &str, vars: &mut NetVarBag<T>) -> Result<()> { 
         self.g.apply_retrying(target, Op::NetRead(vars)) 
     }
 
-    /// Writes pending variables to the network
-    pub fn net_write<T: NetVar>(&mut self, target: &String, vars: &mut NetVarBag<T>)  -> Result<()> {
+    /// Writes pending variables to the network, and fills the netvar bag with the values returned from the network 
+    pub fn net_write<T: NetVar>(&mut self, target: &str, vars: &mut NetVarBag<T>)  -> Result<()> {
         self.g.apply_retrying(target, Op::NetWrite(vars))
+    }
+
+    /// Executes the operation specified
+    pub fn execute<T: NetVar>(&mut self, target: &str, op: Op<'_, T>)  -> Result<()> {
+        self.g.apply_retrying(target, op)
     }
 
 }
