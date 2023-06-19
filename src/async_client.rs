@@ -1,7 +1,4 @@
-//! Asynchronous Gree cilents
-//! 
-//! * `GreeClient` is a low-level API
-//! * `Gree` is a high-level Gree protocol client
+//! Asynchronous Gree cilents (requires `tokio`)
 //! 
 //! Example usage:
 //! 
@@ -33,7 +30,9 @@ pub struct GreeClient {
 impl GreeClient {
     /// Crates new `GreeClient` from `GreeClientConfig`
     pub async fn new(cfg: GreeClientConfig) -> Result<Self> {
-        let s = UdpSocket::bind(cfg.socket_addr).await?;
+        let s = UdpSocket::bind(cfg.bind_addr).await?;
+        s.set_broadcast(true)?;
+        trace!("Bound to: {:?}", s.local_addr());
         Ok(Self { s, cfg })
     }
 
@@ -64,8 +63,9 @@ impl GreeClient {
         Ok(gm)
     }
 
-    /// Performs network scan to discover devices. The scan is terminated either when max device count is reached,
-    /// or by timeout     
+    /// Performs network scan to discover devices. 
+    /// 
+    /// The scan is terminated either when max device count is reached, or by timeout     
     pub async fn scan(&self) -> Result<Vec<(IpAddr, GenericMessage, ScanResponsePack)>> {
         self.s.send_to(scan_request(), (self.cfg.bcast_addr, PORT)).await?;
     
@@ -224,7 +224,7 @@ pub struct Gree {
 }
 
 impl Gree {
-    
+
     pub async fn new(cfg: GreeConfig) -> Result<Self> { 
         Ok(Self { g: GreeInternal::new(cfg).await? })
     }

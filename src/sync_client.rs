@@ -33,6 +33,7 @@ pub struct GreeClient {
 
 impl GreeClient {
     fn recv_loop(s: UdpSocket, send: Sender<(SocketAddr, GenericMessage)>, buffer_size: usize) -> Result<()> {
+        trace!("recv_loop: buffer_size={buffer_size}");
         let mut b = vec![0u8; buffer_size];
         loop {
             let (len, addr) = s.recv_from(&mut b)?;
@@ -45,7 +46,10 @@ impl GreeClient {
 
     fn exchange<'t>(&self, ip: IpAddr, request: &GenericOutMessage<'t>) -> Result<GenericMessage> {
         let b = serde_json::to_vec(request)?;
-        self.s.send_to(&b, (ip, PORT))?;
+        let nbytes = self.s.send_to(&b, (ip, PORT))?;
+        if nbytes != b.len() {
+            error!("sent {}, expected {}", nbytes, b.len());
+        }
         loop {
             let (ra, gm) = self.r.recv_timeout(self.cfg.recv_timeout)?;
             if ra.ip() == ip { break Ok(gm) }
@@ -54,15 +58,18 @@ impl GreeClient {
 
     /// Creates new client
     pub fn new(cfg: GreeClientConfig) -> Result<Self> {
-        let s = UdpSocket::bind(cfg.socket_addr)?;
+        let s = UdpSocket::bind(cfg.bind_addr)?;
+        trace!("Bound to: {:?}", s.local_addr());
+        s.set_broadcast(true)?;
         let sr = s.try_clone()?;
         let (send, r) = std::sync::mpsc::channel();
         std::thread::spawn(move || if let Err(e) = Self::recv_loop(sr, send, cfg.buffer_size) { error!("Recv: {e}") });
         Ok(Self { s, r, cfg })
     }
 
-    /// Performs network scan to discover devices. The scan is terminated either when max device count is reached,
-    /// or by timeout     
+    /// Performs network scan to discover devices. 
+    /// 
+    /// The scan is terminated either when max device count is reached, or by timeout  
     pub fn scan(&self) -> Result<Vec<(IpAddr, GenericMessage, ScanResponsePack)>> {
         self.s.send_to(scan_request(), (self.cfg.bcast_addr, PORT))?;
     
@@ -138,7 +145,6 @@ impl GreeInternal {
         Ok(())
     }
 
-
     fn bindc(mac: &str, dev: &mut Device, c: &GreeClient) -> Result<()> {
         if dev.key.is_none() {
             let pack = c.bind(dev.ip, mac.as_ref())?;
@@ -146,8 +152,6 @@ impl GreeInternal {
         }
         Ok(())
     }
-
-
 
     fn net_read<T: NetVar>(mac: &str, dev: &Device, c: &GreeClient, vars: &mut NetVarBag<T>) -> Result<()> {
         let key = dev.key.as_ref().ok_or_else(|| Error::mac_not_bound(mac))?;

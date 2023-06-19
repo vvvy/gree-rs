@@ -14,7 +14,7 @@ pub struct GreeClientConfig {
     /// Socket recv timeout
     pub recv_timeout: Duration,
     /// Socket addr to bind to
-    pub socket_addr: SocketAddr,
+    pub bind_addr: SocketAddr,
     /// Maximum devices to be discovered diring a scan. The scan is stopped early when this number of devices is reached.
     pub max_count: usize,
     /// Broadcast address for the network.
@@ -34,7 +34,7 @@ impl Default for GreeClientConfig {
         Self {
             buffer_size: Self::DEFAULT_BUFFER_SIZE,
             recv_timeout: Self::DEFAULT_RECV_TIMEOUT,
-            socket_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
+            bind_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
             max_count: Self::DEFAULT_MAX_COUNT, 
             bcast_addr: Self::DEFAULT_BROADCAST_ADDR.into(), 
         }
@@ -46,9 +46,9 @@ impl Default for GreeClientConfig {
 pub struct GreeConfig {
     /// lower level client configuration
     pub client_config: GreeClientConfig,
-    /// Minimum scan age. A soft (unforced) scan is bypassed if the last successful scan is newer than this value. 
+    /// Minimum scan age. Scan is always bypassed if the last successful scan is younger than this value. 
     pub min_scan_age: Duration,
-    /// Maximum scan age. A scan is forced if the last (successful) scan is older than this value.
+    /// Maximum scan age. Scan is forced if the last (successful) scan is older than this value.
     pub max_scan_age: Duration,
     /// Aliases for the network devices
     pub aliases: HashMap<String, MacAddr>,
@@ -119,10 +119,12 @@ pub trait NetVar {
     fn is_net_read_pending(&self) -> bool;
     /// True if the value of this NetVar is supposed to be written to the network
     fn is_net_write_pending(&self) -> bool;
-    /// Signal that the value of this NV doesn't need to be written to the network anymore (typically after a successful net write)
+    /// Signal that the value of this NetVar doesn't need to be written to the network anymore (typically after a successful net write)
     fn clear_net_write_pending(&mut self);
 }
 
+
+/// A basic implementation of [NetVar]
 pub struct SimpleNetVar {
     value: Value,
     net_read_pending: bool,
@@ -193,14 +195,14 @@ pub fn net_var_bag_to_json<T: NetVar>(b: &NetVarBag<T>) -> HashMap<VarName, Valu
     b.into_iter().map(|(k, v)| (*k, v.net_get().clone())).collect()
 }
 
-/// Constructs NetVarBag of SimpleNetVar s, for reading (from keys) or writing (from key => value pairs)
+/// Constructs NetVarBag of [SimpleNetVar]s, for reading (from keys) or writing (from key => value pairs)
 #[macro_export]
 macro_rules! net_var_bag {
     ($($var:expr => $val:expr),+) => {
-        [$(($var, $val)),+].into_iter().try_fold(std::collections::HashMap::new(), SimpleNetVar::add_nv_to)
+        [$(($var, $val)),+].into_iter().try_fold(std::collections::HashMap::new(), gree::SimpleNetVar::add_nv_to)
     };
     ($($var:expr),+) => {
-        [$($var),+].into_iter().try_fold(std::collections::HashMap::new(), SimpleNetVar::add_n_to)
+        [$($var),+].into_iter().try_fold(std::collections::HashMap::new(), gree::SimpleNetVar::add_n_to)
     };
 }
 

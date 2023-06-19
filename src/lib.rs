@@ -1,10 +1,31 @@
 //! Controlling Gree Smart air conditioning units via Rust
 //! 
-//! This crate defines two clients, `GreeClient` and `Gree`, for each of two programming styles (synchronous and asynchronous).
+//! This crate defines two clients, `GreeClient` and `Gree`, for each of two programming styles (synchronous and asynchronous). 
+//! Asynchronous clients require `tokio` feature.
 //! 
-//! See docs under [sync_client] and [async_client].
+//! * `GreeClient` is a low-level API
+//! * `Gree` is a high-level Gree protocol client. It maintains network state and provides a kind of automated workflow. 
 //! 
-//! See also: <https://github.com/tomikaa87/gree-remote> - Protocol description, API in several languages, CLI in python
+//! See documentation under [sync_client] and [async_client].
+//!
+//! ## `Gree` high-level client
+//! 
+//! In particular, in `Gree` scans and binds typically do not need to be invoked explicitly, as the client invokes them from 
+//! within  `net_read`/`net_write` if necessary. More precisely:
+//! 
+//! * Bind is invoked if the [Device]'s `key` field is empty
+//! * Scan is invoked if one of the following holds:
+//!   - if the last scan performed is older than `max_scan_age`
+//!   - if `net_read`/`net_write` is called against a device that is missing from the internal state
+//! * Scan is always bypassed if the last scan performed is younger than `min_scan_age`
+//! 
+//! ## Features
+//! 
+//! * `tokio` - enable asynchronous clients with `tokio`
+//! 
+//! ## See also
+//! 
+//! * <https://github.com/tomikaa87/gree-remote> - Protocol description, API in several languages, CLI in python
 
 mod apdu;
 mod state;
@@ -12,7 +33,7 @@ pub mod sync_client;
 pub mod async_client;
 
 
-pub use apdu::{vars, vars::DEFAULT as DEFAULT_VARS};
+pub use apdu::vars;
 pub use state::*;
 pub use serde_json::Value;
 

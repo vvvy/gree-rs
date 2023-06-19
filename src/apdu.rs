@@ -236,8 +236,6 @@ pub const ALL: [VarName; 20] = [
     TIME,
 ];
 
-pub const DEFAULT: [VarName; 5] = [POW, MOD, SET_TEM, TEM_UN, WD_SPD];
-
 /// Internalizes name of variable
 pub fn name_of(n: &str) -> Option<VarName> {
     match n {

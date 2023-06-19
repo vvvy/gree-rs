@@ -1,4 +1,4 @@
-use gree::{*, async_client::*};
+use gree::{*, async_client::*, vars::*};
 use log::info;
 use serde_derive::Serialize;
 use std::{net::{IpAddr, Ipv4Addr}, str::FromStr, convert::Infallible};
@@ -10,7 +10,7 @@ enum Op {
     Help,
     Scan,
     Bind,
-    Status,
+    Get,
     SetVars,
     Service
 }
@@ -22,16 +22,22 @@ struct Args {
     mac: Option<String>,
     ip: Option<IpAddr>,
     key: Option<String>,
-    vars: Vec<(String, Value)>
+    names: Vec<VarName>,
+    vars: Vec<(VarName, Value)>
 }
 
-fn parse_var(v: &str) -> Vec<(String, Value)> {
-    v.split(',').map(|kv| -> Option<(String, Value)> {
+fn parse_names(v: &str) -> Vec<VarName> {
+    v.split(',').map(|name| vars::name_of(name).expect("Invalid variable name")).collect()
+}
+
+fn parse_vars(v: &str) -> Vec<(VarName, Value)> {
+    v.split(',').map(|kv| -> Option<(VarName, Value)> {
         let mut sp = kv.split('=');
         let name = sp.next()?;
+        let name = vars::name_of(name).expect("Invalid variable name");
         let value = sp.next()?;
         let value = Value::from_str(value).ok()?;
-        Some((name.to_owned(), value))
+        Some((name, value))
     }).map(|kvo| kvo.expect("invalid KV"))
     .collect()
 }
@@ -45,6 +51,7 @@ impl Default for Args {
             mac: None, 
             ip: None, 
             key: None,
+            names: vec![], //POW, MOD, SET_TEM, TEM_UN, WD_SPD
             vars: vec![],
         }
     }
@@ -59,7 +66,7 @@ Usage
 
 async_tool --scan|-s [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-devices({count})> ]
 async_tool --bind|-b --ip|-i <device-ip-address> --mac|-m <device-mac-adress>
-async_tool --status|-t --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key>
+async_tool --get|-g --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key> --name|-n NAME[,...]
 async_tool --set|-e --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key> --var|-v NAME=VALUE[,...]
 async_tool --service|-S  [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-devices({count})> ]
 "#,
@@ -79,7 +86,8 @@ fn getcmdln() -> Args {
                 "--count" | "-c" => args.count = a.parse().expect("invalid --count"),
                 "--ip" | "-i" => args.ip = Some( a.parse().expect("invalid --ip")),
                 "--key" | "-k" => args.key = Some(a),
-                "--var" | "-v" => args.vars.append(&mut parse_var(&a)),
+                "--name" | "-n" => args.names.append(&mut parse_names(&a)),
+                "--var" | "-v" => args.vars.append(&mut parse_vars(&a)),
                 other => panic!("`{other}` invalid")
             }
             None
@@ -88,7 +96,7 @@ fn getcmdln() -> Args {
                 "--help" | "-h" => args.op = Some(Op::Help),
                 "--bind" | "-b" => args.op = Some(Op::Bind),
                 "--scan" | "-s" => args.op = Some(Op::Scan),
-                "--status" | "-t" => args.op = Some(Op::Status),
+                "--get" | "-g" => args.op = Some(Op::Get),
                 "--set" | "-e" => args.op = Some(Op::SetVars),
                 "--service" | "-S" => args.op = Some(Op::Service),
                 _ => return Some(a)
@@ -132,11 +140,11 @@ async fn main() -> Result<()> {
             let r = c.bind(ip, &mac).await?;
             println!("{r:?}");
         }
-        Some(Op::Status) => {
+        Some(Op::Get) => {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let key = args.key.expect("Must specify --key");
-            let r = c.getvars(ip, &mac, &key, &DEFAULT_VARS).await?;
+            let r = c.getvars(ip, &mac, &key, &args.names).await?;
             println!("{r:?}");            
         }
         Some(Op::SetVars) => {
@@ -147,7 +155,7 @@ async fn main() -> Result<()> {
             if args.vars.is_empty() {
                 panic!("must specify at least one variable")
             }
-            let names: Vec<&'static str> = args.vars.iter().map(|(n, _)| vars::name_of(n).expect("invalid var name")).collect();
+            let names: Vec<VarName> = args.vars.iter().map(|(n, _)| *n).collect();
             let values: Vec<Value> = args.vars.into_iter().map(|(_, v)|v).collect();
             let r = c.setvars(ip, &mac, &key, &names, &values).await?;
             println!("{r:?}");            

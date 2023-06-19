@@ -22,3 +22,6 @@ tiny_http = "0.12.0"
 
 [features]
 
+[[example]]
+name = "async_tool"
+required-features = ["tokio"]
