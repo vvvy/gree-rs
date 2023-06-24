@@ -86,7 +86,7 @@ impl GreeState {
     }
 }
 
-/// Holds information about a Device on the network.
+/// Information about a gree Device on the network.
 /// 
 /// Devices are typically discovered during scans. The `key` field is set as a result of successful binding.
 pub struct Device {
@@ -136,6 +136,7 @@ impl SimpleNetVar {
         Self { value: Value::Null, net_read_pending: true, net_write_pending: false }
     }
 
+    /// Parses variable setting and adds it to a `NetVarBag`. The `NetVarBag` might then be used for a `net_write`.
     pub fn add_nv_to(mut bag: NetVarBag<Self>, (name, value): (impl AsRef<str>, impl AsRef<str>)) -> Result<NetVarBag<Self>> {
         let name = vars::name_of(name.as_ref())
             .ok_or_else(|| Error::InvalidVar(name.as_ref().to_owned()))?;
@@ -144,6 +145,7 @@ impl SimpleNetVar {
         Ok(bag)
     }
 
+    /// Parses variable name and adds it to a `NetVarBag`. The `NetVarBag` might then be used for a `net_read`.
     pub fn add_n_to(mut bag: NetVarBag<Self>, name: impl AsRef<str>) -> Result<NetVarBag<Self>> {
         let name = vars::name_of(name.as_ref())
             .ok_or_else(|| Error::InvalidVar(name.as_ref().to_owned()))?;
@@ -151,15 +153,18 @@ impl SimpleNetVar {
         Ok(bag)
     }
 
+    /// Creates a `SimpleNetVar` from a value. The `SimpleNetVar` might then be used for a `net_write`. 
     pub fn from_value(value: Value) -> Self {
         Self { value, net_read_pending: false, net_write_pending: true }
     }
 
+    /// Sets a value of the `SimpleNetVar` from the user side. The `SimpleNetVar` might then be used for a `net_write`. 
     pub fn user_set(&mut self, value: Value) {
         self.value = value;
         self.net_write_pending = true;
     }
 
+    /// Gets a value of the `SimpleNetVar` from the user side, typically after a `net_read`.
     pub fn user_get(&self) -> &Value {
         &self.value
     }

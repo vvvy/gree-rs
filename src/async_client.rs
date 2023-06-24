@@ -196,12 +196,6 @@ impl GreeInternal {
         }
     }
 
-    fn with_device<R>(&self, target: &str, f: impl FnOnce(&Device) -> R) -> Result<R> {
-        let mac = self.cfg.aliases.get(target).map(|s| s.as_str()).unwrap_or(target);
-        let dev = self.s.devices.get(mac).ok_or_else(||Error::not_found(target))?;
-        Ok(f(dev))    
-    }
-
     async fn apply<T: NetVar>(&mut self, target: &str, op: &mut Op<'_, T>) -> Result<()> {
         let mac = self.cfg.aliases.get(target).map(|s| s.as_str()).unwrap_or(target);
         let dev = self.s.devices.get_mut(mac).ok_or_else(||Error::not_found(target))?;
@@ -212,41 +206,54 @@ impl GreeInternal {
     async fn apply_retrying<T: NetVar>(&mut self, target: &str, mut op: Op<'_, T>) -> Result<()> {
         let () = self.scan(false).await?;
         let r = self.apply(target, &mut op).await;
-        if r.is_ok() { return Ok(());}
+        if r.is_ok() { return r }
         let () = self.scan(true).await?;        
         self.apply(target, &mut op).await
     }
 
+    fn with_device<R>(&self, target: &str, f: impl FnOnce(&Device) -> R) -> Result<R> {
+        let mac = self.cfg.aliases.get(target).map(|s| s.as_str()).unwrap_or(target);
+        let dev = self.s.devices.get(mac).ok_or_else(||Error::not_found(target))?;
+        Ok(f(dev))    
+    }
+
+    /// applies f to the target's state; retries after forced scan on failure (i.e. if device not found)
+    async fn with_device_retrying<R>(&mut self, target: &str, f: impl Fn(&Device) -> R) -> Result<R> {
+        let () = self.scan(false).await?;
+        let r = self.with_device(target, &f);
+        if r.is_ok() { return r }
+        let () = self.scan(true).await?;        
+        self.with_device(target, &f)
+    }
+
 }
 
+/// High-level Gree client
+/// 
+/// It maintains consistent network state through periodically re-scanning the network. See the crate level documentation 
+/// for the explanation of the re-scanning rules.
 pub struct Gree {
     g: GreeInternal,
 }
 
 impl Gree {
 
+    /// Creates a new Gree client from configuration
     pub async fn new(cfg: GreeConfig) -> Result<Self> { 
         Ok(Self { g: GreeInternal::new(cfg).await? })
     }
 
-    pub fn state(&self) -> &GreeState { &self.g.s }
-
-    pub fn with_state<R>(&self, f: impl FnOnce(&GreeState) -> R) -> R {
-        f(&self.g.s)
+    /// Calls `f` with the current state
+    pub async fn with_state<R>(&mut self, f: impl Fn(&GreeState) -> R) -> Result<R> {
+        self.g.scan(false).await?;
+        Ok(f(&self.g.s))
     }
 
-    pub fn with_device<R>(&self, target: &String, f: impl FnOnce(&Device) -> R) -> Result<R> {
-        self.g.with_device(target, f)
-    }
-
-    /// Performs scan and fills state
-    pub async fn scan(&mut self) -> Result<()> { 
-        self.g.scan(false).await 
-    }
-
-    /// Binds 
-    pub async fn bind(&mut self, target: &String) -> Result<()> { 
-        self.g.apply_retrying(target, Op::<SimpleNetVar>::Bind).await 
+    /// Calls `f` with the device specified as `target`
+    /// 
+    /// Performs forced scan if the device was not found.
+    pub async fn with_device<R>(&mut self, target: &String, f: impl Fn(&Device) -> R) -> Result<R> {
+        self.g.with_device_retrying(target, f).await
     }
 
     /// Reads pending variables from the network
@@ -262,6 +269,18 @@ impl Gree {
     /// Executes the operation specified
     pub async fn execute<T: NetVar>(&mut self, target: &str, op: Op<'_, T>)  -> Result<()> {
         self.g.apply_retrying(target, op).await
+    }
+
+    /// Performs explicit scan
+    pub async fn scan(&mut self) -> Result<()> { 
+        self.g.scan(true).await 
+    }
+
+    /// Performs explicit bind
+    /// 
+    /// Note that this method is rarely needed, as binds are usually performed under-the-hood when necessary.
+    pub async fn bind(&mut self, target: &String) -> Result<()> { 
+        self.g.apply_retrying(target, Op::<SimpleNetVar>::Bind).await 
     }
 
 }

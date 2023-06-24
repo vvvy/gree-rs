@@ -1,17 +1,18 @@
 use gree::{*, async_client::*, vars::*};
 use log::info;
 use serde_derive::Serialize;
-use std::{net::{IpAddr, Ipv4Addr}, str::FromStr, convert::Infallible};
+use std::{net::{IpAddr, Ipv4Addr}, str::FromStr, convert::Infallible, collections::HashMap};
 use warp::Filter;
 
 const BCAST_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 255));
 
+#[derive(Clone, Copy)]
 enum Op {
     Help,
     Scan,
     Bind,
     Get,
-    SetVars,
+    Set,
     Service
 }
 
@@ -23,7 +24,8 @@ struct Args {
     ip: Option<IpAddr>,
     key: Option<String>,
     names: Vec<VarName>,
-    vars: Vec<(VarName, Value)>
+    vars: HashMap<VarName, Value>,
+    aliases: HashMap<String, String>,
 }
 
 fn parse_names(v: &str) -> Vec<VarName> {
@@ -42,6 +44,16 @@ fn parse_vars(v: &str) -> Vec<(VarName, Value)> {
     .collect()
 }
 
+fn parse_aliases(v: &str) -> Vec<(String, String)> {
+    v.split(',').map(|kv| -> Option<(String, String)> {
+        let mut sp = kv.split('=');
+        let name = sp.next()?;
+        let value = sp.next()?;
+        Some((name.to_owned(), value.to_owned()))
+    }).map(|kvo| kvo.expect("invalid alias spec"))
+    .collect()
+}
+
 impl Default for Args {
     fn default() -> Self {
         Self { 
@@ -52,7 +64,8 @@ impl Default for Args {
             ip: None, 
             key: None,
             names: vec![], //POW, MOD, SET_TEM, TEM_UN, WD_SPD
-            vars: vec![],
+            vars: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 }
@@ -68,7 +81,7 @@ async_tool --scan|-s [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-
 async_tool --bind|-b --ip|-i <device-ip-address> --mac|-m <device-mac-adress>
 async_tool --get|-g --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key> --name|-n NAME[,...]
 async_tool --set|-e --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key> --var|-v NAME=VALUE[,...]
-async_tool --service|-S  [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-devices({count})> ]
+async_tool --service|-S [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-devices({count})> ]  [ --alias|-A ALIAS=MAC[,...] ]
 "#,
 bcast=a.bcast,
 count=a.count
@@ -87,7 +100,8 @@ fn getcmdln() -> Args {
                 "--ip" | "-i" => args.ip = Some( a.parse().expect("invalid --ip")),
                 "--key" | "-k" => args.key = Some(a),
                 "--name" | "-n" => args.names.append(&mut parse_names(&a)),
-                "--var" | "-v" => args.vars.append(&mut parse_vars(&a)),
+                "--var" | "-v" => args.vars.extend(parse_vars(&a)),
+                "--alias" | "-A" => args.aliases.extend(parse_aliases(&a)),
                 other => panic!("`{other}` invalid")
             }
             None
@@ -97,7 +111,7 @@ fn getcmdln() -> Args {
                 "--bind" | "-b" => args.op = Some(Op::Bind),
                 "--scan" | "-s" => args.op = Some(Op::Scan),
                 "--get" | "-g" => args.op = Some(Op::Get),
-                "--set" | "-e" => args.op = Some(Op::SetVars),
+                "--set" | "-e" => args.op = Some(Op::Set),
                 "--service" | "-S" => args.op = Some(Op::Service),
                 _ => return Some(a)
             }
@@ -118,14 +132,28 @@ async fn main() -> Result<()> {
 
     let args = getcmdln();
 
+    match args.op {
+        Some(Op::Service) =>
+            async_service(args).await?,
+        Some(Op::Help) | None =>
+            help(),
+        Some(tool_op) =>
+            tool(tool_op, args).await?,
+    }
+
+    Ok(())
+}
+
+
+async fn tool(op: Op, args: Args) -> Result<()> {
     let mut cc = GreeClientConfig::default();
     cc.bcast_addr = args.bcast;
     cc.max_count = args.count;
 
     let c = GreeClient::new(cc).await?;
 
-    match args.op {
-        Some(Op::Scan) => {
+    match op {
+        Op::Scan => {
             let devs = c.scan().await?;
             for (a, s, p) in devs {
                 println!("{a}");
@@ -134,20 +162,20 @@ async fn main() -> Result<()> {
                 println!("--------");
             }
         }
-        Some(Op::Bind) => {
+        Op::Bind => {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let r = c.bind(ip, &mac).await?;
             println!("{r:?}");
         }
-        Some(Op::Get) => {
+        Op::Get => {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let key = args.key.expect("Must specify --key");
             let r = c.getvars(ip, &mac, &key, &args.names).await?;
             println!("{r:?}");            
         }
-        Some(Op::SetVars) => {
+        Op::Set => {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let key = args.key.expect("Must specify --key");
@@ -160,15 +188,11 @@ async fn main() -> Result<()> {
             let r = c.setvars(ip, &mac, &key, &names, &values).await?;
             println!("{r:?}");            
         }
-        Some(Op::Service) => {
-            async_service(args).await?;
-        }
-        Some(Op::Help) | None => {
-            help()
-        }
+        _ => panic!("Invalid op")
     }
 
     Ok(())
+
 }
 
 /// Example usage
@@ -192,6 +216,7 @@ async fn async_service(args: Args) -> Result<()> {
     let mut gree_cfg = GreeConfig::default();
     gree_cfg.client_config.bcast_addr = args.bcast;
     gree_cfg.client_config.max_count = args.count;
+    gree_cfg.aliases = args.aliases;
 
     let gree = Gree::new(gree_cfg).await?;
     let gree = Arc::new(Mutex::new(gree));
@@ -244,25 +269,26 @@ async fn async_service(args: Args) -> Result<()> {
     let scan = w::path!("scan")
         .and(with_gree(&gree))
         .and_then(|gree: Arc<Mutex<Gree>>| async move { 
-            gree
-            .lock().await
-            .scan().await
-            .map(|_| w::reply::reply())
+            let mut g = gree.lock().await;
+            g.scan().await.map_err(E::custom)?;
+            g.with_state(|state| -> Vec<String> { state.devices.keys().cloned().collect() }).await
+            .map(|devnames| w::reply::json(&devnames))
             .map_err(E::custom)
         });
     let population = w::path!("dev")
         .and(with_gree(&gree))
-        .and_then(|gree: Arc<Mutex<Gree>>| async move { 
-            let devnames: Vec<String> = gree.lock().await.state().devices.keys().map(|w|w.to_owned()).collect();
-            let rv: std::result::Result<_, w::Rejection> = Ok(w::reply::json(&devnames));
-            rv
+        .and_then(|gree: Arc<Mutex<Gree>>| async move {
+            gree.lock().await
+            .with_state(|state| -> Vec<String> { state.devices.keys().cloned().collect() }).await
+            .map(|devnames| w::reply::json(&devnames))
+            .map_err(E::custom)
         });
     let devinfo = w::path!("dev" / String)
         .and(with_gree(&gree))
         .and_then(|dev, gree: Arc<Mutex<Gree>>| async move { 
             gree
             .lock().await
-            .with_device(&dev, |dev| DevInfo { mac: dev.scan_result.mac.clone(), ip: dev.ip.to_string() })
+            .with_device(&dev, |dev| DevInfo { mac: dev.scan_result.mac.clone(), ip: dev.ip.to_string() }).await
             .map(|d| w::reply::json(&d))
             .map_err(E::custom)
         });

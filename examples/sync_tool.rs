@@ -1,15 +1,16 @@
 use gree::{*, sync_client::*, vars::*};
 use log::info;
-use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, str::FromStr};
+use std::{net::{IpAddr, Ipv4Addr, SocketAddr}, str::FromStr, collections::HashMap};
 
 const BCAST_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 255));
 
+#[derive(Clone, Copy)]
 enum Op {
     Help,
     Scan,
     Bind,
     Get,
-    SetVars,
+    Set,
     Service
 }
 
@@ -21,7 +22,8 @@ struct Args {
     ip: Option<IpAddr>,
     key: Option<String>,
     names: Vec<VarName>,
-    vars: Vec<(VarName, Value)>
+    vars: HashMap<VarName, Value>,
+    aliases: HashMap<String, String>,
 }
 
 fn parse_names(v: &str) -> Vec<VarName> {
@@ -40,6 +42,16 @@ fn parse_vars(v: &str) -> Vec<(VarName, Value)> {
     .collect()
 }
 
+fn parse_aliases(v: &str) -> Vec<(String, String)> {
+    v.split(',').map(|kv| -> Option<(String, String)> {
+        let mut sp = kv.split('=');
+        let name = sp.next()?;
+        let value = sp.next()?;
+        Some((name.to_owned(), value.to_owned()))
+    }).map(|kvo| kvo.expect("invalid alias spec"))
+    .collect()
+}
+
 impl Default for Args {
     fn default() -> Self {
         Self { 
@@ -49,8 +61,9 @@ impl Default for Args {
             mac: None, 
             ip: None, 
             key: None,
-            names: vec![POW, MOD, SET_TEM, TEM_UN, WD_SPD],
-            vars: vec![],
+            names: vec![], //POW, MOD, SET_TEM, TEM_UN, WD_SPD
+            vars: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 }
@@ -66,7 +79,7 @@ sync_tool --scan|-s [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-d
 sync_tool --bind|-b --ip|-i <device-ip-address> --mac|-m <device-mac-adress>
 sync_tool --get|-g --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key> --name|-n NAME[,...]
 sync_tool --set|-e --ip|-i <device-ip-address> --mac|-m <device-mac-adress> --key|-k <device-key> --var|-v NAME=VALUE[,...]
-sync_tool --service|-S  [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-devices({count})> ]
+sync_tool --service|-S [ --bcast|-a <broadcast-addr({bcast})> ] [ --count|-c <max-devices({count})> ]  [ --alias|-A ALIAS=MAC[,...] ]
 "#,
 bcast=a.bcast,
 count=a.count
@@ -85,7 +98,8 @@ fn getcmdln() -> Args {
                 "--ip" | "-i" => args.ip = Some( a.parse().expect("invalid --ip")),
                 "--key" | "-k" => args.key = Some(a),
                 "--name" | "-n" => args.names.append(&mut parse_names(&a)),
-                "--var" | "-v" => args.vars.append(&mut parse_vars(&a)),
+                "--var" | "-v" => args.vars.extend(parse_vars(&a)),
+                "--alias" | "-A" => args.aliases.extend(parse_aliases(&a)),
                 other => panic!("`{other}` invalid")
             }
             None
@@ -95,7 +109,7 @@ fn getcmdln() -> Args {
                 "--bind" | "-b" => args.op = Some(Op::Bind),
                 "--scan" | "-s" => args.op = Some(Op::Scan),
                 "--get" | "-g" => args.op = Some(Op::Get),
-                "--set" | "-e" => args.op = Some(Op::SetVars),
+                "--set" | "-e" => args.op = Some(Op::Set),
                 "--service" | "-S" => args.op = Some(Op::Service),
                 _ => return Some(a)
             }
@@ -116,17 +130,30 @@ fn main() -> Result<()> {
 
     let args = getcmdln();
 
+    match args.op {
+        Some(Op::Service) =>
+            service(args)?,
+        Some(Op::Help) | None =>
+            help(),
+        Some(tool_op) =>
+            tool(tool_op, args)?
+    }
+
+    Ok(())
+}
+
+
+fn tool(op: Op, args: Args) -> Result<()> {
     let mut cc = GreeClientConfig::default();
     cc.bcast_addr = args.bcast;
     cc.max_count = args.count;
-    //cc.bind_addr = "10.0.0.101:0".parse().unwrap();
 
     let c = GreeClient::new(cc)?;
 
     log::trace!("Init ok");
 
-    match args.op {
-        Some(Op::Scan) => {
+    match op {
+        Op::Scan => {
             let devs = c.scan()?;
             for (a, s, p) in devs {
                 println!("{a}");
@@ -135,20 +162,20 @@ fn main() -> Result<()> {
                 println!("--------");
             }
         }
-        Some(Op::Bind) => {
+        Op::Bind => {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let r = c.bind(ip, &mac)?;
             println!("{r:?}");
         }
-        Some(Op::Get) => {
+        Op::Get => {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let key = args.key.expect("Must specify --key");
             let r = c.getvars(ip, &mac, &key, &args.names)?;
             println!("{r:?}");            
         }
-        Some(Op::SetVars) => {
+        Op::Set => {
             let ip = args.ip.expect("Must specify --ip");
             let mac = args.mac.expect("Must specify --mac");
             let key = args.key.expect("Must specify --key");
@@ -161,15 +188,14 @@ fn main() -> Result<()> {
             let r = c.setvars(ip, &mac, &key, &names, &values)?;
             println!("{r:?}");            
         }
-        Some(Op::Service) => {
-            service(args)?
+        _ => {
+            panic!("Invalid tool op")
         }
-        Some(Op::Help) | None => {
-            help()
-        }
+
     }
 
     Ok(())
+
 }
 
 /// Example usage
@@ -192,10 +218,12 @@ fn service(args: Args) -> Result<()> {
     let mut gree_cfg = GreeConfig::default();
     gree_cfg.client_config.bcast_addr = args.bcast;
     gree_cfg.client_config.max_count = args.count;
+    gree_cfg.aliases = args.aliases;
 
     let mut gree = Gree::new(gree_cfg)?;
     enum Req<'t> {
         Scan,
+        Population,
         Get(&'t str, Vec<&'t str>),
         Set(&'t str, Vec<(&'t str, &'t str)>)
     }
@@ -207,9 +235,8 @@ fn service(args: Args) -> Result<()> {
         let mut qp = path.split('/').skip(1);
         let root = qp.next()?;
         match root {
-            "scan" => Some(Req::Scan),
-            "dev" => {
-                let device = qp.next()?;
+            "scan" => if qp.next().is_none() { Some(Req::Scan) } else { None },
+            "dev" => if let Some(device) = qp.next() {
                 let verb = qp.next()?;
                 match verb {
                     "get" => {
@@ -225,6 +252,8 @@ fn service(args: Args) -> Result<()> {
                     }
                     _ => None
                 }
+            } else {
+                Some(Req::Population)
             }
             _ => None
         }
@@ -234,7 +263,12 @@ fn service(args: Args) -> Result<()> {
         Ok(match op {
             Some(Req::Scan) => {
                 gree.scan()?;
-                Response::from_string("{}")
+                let devices = gree.with_state(|state|->Vec<String> { state.devices.keys().cloned().collect() })?;
+                Response::from_string(serde_json::to_string(&devices)?)
+            }
+            Some(Req::Population) => {
+                let devices = gree.with_state(|state|->Vec<String> { state.devices.keys().cloned().collect() })?;
+                Response::from_string(serde_json::to_string(&devices)?)
             }
             Some(Req::Get(device, names)) => {
                 let mut nvb = net_var_bag_from_names(names.iter())?;

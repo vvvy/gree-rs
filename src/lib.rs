@@ -11,12 +11,14 @@
 //! ## `Gree` high-level client
 //! 
 //! In particular, in `Gree` scans and binds typically do not need to be invoked explicitly, as the client invokes them from 
-//! within  `net_read`/`net_write` if necessary. More precisely:
+//! within `net_read`/`net_write`/`with_device` if necessary. More precisely:
 //! 
-//! * Bind is invoked if the [Device]'s `key` field is empty
+//! * Bind is invoked if the [Device]'s `key` field is needed but empty
 //! * Scan is invoked if one of the following holds:
-//!   - if the last scan performed is older than `max_scan_age`
-//!   - if `net_read`/`net_write` is called against a device that is missing from the internal state
+//!   - the last scan performed is older than `max_scan_age`
+//!   - `net_read`/`net_write`/`with_device` is called against a device that is missing from the internal state
+//!   - there was a network error communicating with the device
+//!   - the scan was invoked explicitly
 //! * Scan is always bypassed if the last scan performed is younger than `min_scan_age`
 //! 
 //! ## Features
@@ -53,6 +55,7 @@ pub enum Error {
     Io(std::io::Error),
     Send,
     RecvTimeout,
+    RecvDisconnected,
     ParseInt(std::num::ParseIntError),
 
     ResponseTimeout,
@@ -68,6 +71,7 @@ impl Error {
     pub fn not_found(id: &str) -> Self { Self::NotFound(id.to_owned()) }
     pub fn invalid_var(id: &str) -> Self { Self::NotFound(id.to_owned()) }
     pub fn invalid_value(var: VarName, value: &str) -> Self { Self::InvalidValue(var, value.to_owned()) }
+    pub fn receiver_disconnected() -> Self { Self::RecvDisconnected }
 }
 
 impl From<serde_json::Error> for Error {
@@ -114,6 +118,8 @@ impl std::fmt::Display for Error {
             Self::Io(e) => write!(f, "Base64Decode: {e}"),
             Self::Send => write!(f, "Send"),
             Self::RecvTimeout => write!(f, "RecvTimeout"),
+            Self::RecvDisconnected => write!(f, "RecvDisconnected"),
+
             Self::ParseInt(e) => write!(f, "ParseInt: {e}"),
 
             Self::ResponseTimeout => write!(f, "ResponseTimeout"),
@@ -126,24 +132,3 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error { }
-
-
-
-
-/* 
-
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
-*/
