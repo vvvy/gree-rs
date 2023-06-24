@@ -1,6 +1,6 @@
 [package]
 name = "gree"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Controlling Gree Smart air conditioning units via Rust"
 repository = "https://github.com/vvvy/gree-rs"
@@ -24,6 +24,7 @@ warp = { version = "0.3", default-features = false }
 tiny_http = "0.12.0"
 
 [features]
+default = ["tokio"]
 
 [[example]]
 name = "async_tool"
