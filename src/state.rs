@@ -86,14 +86,14 @@ impl GreeState {
     }
 }
 
-/// Information about a gree Device on the network.
+/// Information about a gree device on the network.
 /// 
-/// Devices are typically discovered during scans. The `key` field is set as a result of successful binding.
+/// Devices are discovered during scans. The `key` field is set as a result of successful binding.
 pub struct Device {
-    /// Known IP address of the device. 
+    /// IP address of the device
     pub ip: IpAddr,
 
-    /// Device's scan respobse
+    /// Device's scan response
     pub scan_result: ScanResponsePack,
 
     /// Encryption key (if bound)
